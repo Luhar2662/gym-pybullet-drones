@@ -141,7 +141,7 @@ def run(multiagent=DEFAULT_MA, action_space = DEFAULT_ACTION_STRING, train_steps
                                obs=DEFAULT_OBS,
                                act=act_space,
                                record=record_video)
-        test_env_nogui = SafeHoverAviary(obs=DEFAULT_OBS, act=DEFAULT_ACT)
+        test_env_nogui = SafeHoverAviary(obs=DEFAULT_OBS, act=act_space)
     else:
         test_env = MultiHoverAviary(gui=gui,
                                         num_drones=DEFAULT_AGENTS,
@@ -215,7 +215,7 @@ if __name__ == '__main__':
     parser.add_argument('--colab',              default=DEFAULT_COLAB,         type=bool,          help='Whether example is being run by a notebook (default: "False")', metavar='')
     parser.add_argument('--action_space', default=DEFAULT_ACTION_STRING, type=str, help='string corresponding to the action space used for training', metavar='')
     parser.add_argument('--train_steps', default=DEFAULT_STEPS, type=int, help='Amount of timesteps to train if target isnt reached', metavar='')
-    parser.add_argument('--segment_path', default=DEFAULT_SEGMENT_PATH, type=bool,           help='Whether we segment the path to a random target (needed for bigger boxes)', metavar='')
+    parser.add_argument('--segment_path', default=DEFAULT_SEGMENT_PATH, type=str2bool,           help='Whether we segment the path to a random target (needed for bigger boxes)', metavar='')
     parser.add_argument('--num_segments', default=DEFAULT_NUM_SEGMENTS, type=int,           help='How many segments to make', metavar='')
     parser.add_argument('--random_init', default=DEFAULT_RANDOM_INIT, type=str2bool,           help='whether to call warmup() and randomize starting positions for policy training', metavar='')
     ARGS = parser.parse_args()

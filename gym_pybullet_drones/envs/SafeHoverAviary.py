@@ -101,7 +101,7 @@ class SafeHoverAviary(BaseRLAviary):
         safety_margin = min(ground_margin, ceil_margin, back_margin, front_margin, left_margin, right_margin)
 
         #test reward to penalize being on ground:
-        #penalty = -10 if state[2]<.2 else 0
+        penalty = -20 if state[2]<.25 else 0
 
 
         return safety_margin #+ penalty
@@ -307,7 +307,7 @@ class SafeHoverAviary(BaseRLAviary):
         #### Update and store the drones kinematic information #####
         self._updateAndStoreKinematicInformation()
         #### Warmup for RL methods -- move to a random setpoint. Modification from BaseAviary
-        print(self.RANDOM_INIT)
+        print('random init: ', self.RANDOM_INIT)
         if self.RANDOM_INIT:
             self._warmup()
         #### Start video recording #################################

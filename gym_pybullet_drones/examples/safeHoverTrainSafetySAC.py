@@ -1,13 +1,7 @@
 """Script demonstrating the use of `gym_pybullet_drones`'s Gymnasium interface.
 
-Class SafeHoverAvieary is used as learning env for the PPO algorithm.
+Class SafeHoverAviary is used as learning env for the SAC SB3 algorithm.
 
-Example
--------
-In a terminal, run as:
-
-    $ python learn.py --multiagent false
-    $ python learn.py --multiagent true
 
 Notes
 -----
@@ -22,7 +16,8 @@ import argparse
 import gymnasium as gym
 import numpy as np
 import torch
-from stable_baselines3 import PPO
+from stable_baselines3 import SAC
+from gym_pybullet_drones.isaacs.safety_sac import SafetySAC
 from stable_baselines3.common.env_util import make_vec_env
 from stable_baselines3.common.callbacks import EvalCallback, StopTrainingOnRewardThreshold
 from stable_baselines3.common.evaluation import evaluate_policy
@@ -33,6 +28,15 @@ from gym_pybullet_drones.envs.HoverAviary import HoverAviary
 from gym_pybullet_drones.envs.MultiHoverAviary import MultiHoverAviary
 from gym_pybullet_drones.utils.utils import sync, str2bool
 from gym_pybullet_drones.utils.enums import ObservationType, ActionType
+
+class ObsSqueezeWrapper(gym.Wrapper):
+    def reset(self, **kwargs):
+        obs, info = self.env.reset(**kwargs)
+        return np.squeeze(obs, axis=0), info
+
+    def step(self, action):
+        obs, reward, done, trunc, info = self.env.step(action)
+        return np.squeeze(obs, axis=0), reward, done, trunc, info
 
 DEFAULT_GUI = True
 DEFAULT_RECORD_VIDEO = False
@@ -46,24 +50,24 @@ DEFAULT_AGENTS = 2
 DEFAULT_MA = False
 DEFAULT_STEPS = 1000000
 
+
 DEFAULT_SEGMENT_PATH = True
 DEFAULT_NUM_SEGMENTS = 1
 DEFAULT_RANDOM_INIT = False
 
 def run(multiagent=DEFAULT_MA, action_space = DEFAULT_ACTION_STRING, train_steps=DEFAULT_STEPS, output_folder=DEFAULT_OUTPUT_FOLDER, gui=DEFAULT_GUI, plot=True, colab=DEFAULT_COLAB, record_video=DEFAULT_RECORD_VIDEO, local=True, segment_path = DEFAULT_SEGMENT_PATH, num_segments = DEFAULT_NUM_SEGMENTS, random_init = DEFAULT_RANDOM_INIT):
-
     filename = os.path.join(output_folder, 'save-'+datetime.now().strftime("%m.%d.%Y_%H.%M.%S"))
     if not os.path.exists(filename):
         os.makedirs(filename+'/')
     
     act_space = ActionType(action_space)
-
+    print("creating safehoverenv with random_init value: ", random_init)
     if not multiagent:
         train_env = make_vec_env(SafeHoverAviary,
                                  env_kwargs=dict(obs=DEFAULT_OBS, act=act_space, random_init=random_init),
                                  n_envs=1,
                                  seed=0
-                                 )
+                                 )#check if randinit needs to be passed to eval_env
         eval_env = SafeHoverAviary(obs=DEFAULT_OBS, act=act_space, random_init = random_init)
     else:
         train_env = make_vec_env(MultiHoverAviary,
@@ -73,12 +77,14 @@ def run(multiagent=DEFAULT_MA, action_space = DEFAULT_ACTION_STRING, train_steps
                                  )
         eval_env = MultiHoverAviary(num_drones=DEFAULT_AGENTS, obs=DEFAULT_OBS, act=act_space)
 
+    
+    
     #### Check the environment's spaces ########################
     print('[INFO] Action space:', train_env.action_space)
     print('[INFO] Observation space:', train_env.observation_space)
 
     #### Train the model #######################################
-    model = PPO('MlpPolicy',
+    model = SafetySAC('MlpPolicy',
                 train_env,
                 # tensorboard_log=filename+'/tb/',
                 verbose=1)
@@ -110,6 +116,7 @@ def run(multiagent=DEFAULT_MA, action_space = DEFAULT_ACTION_STRING, train_steps
     with np.load(filename+'/evaluations.npz') as data:
         for j in range(data['timesteps'].shape[0]):
             print(str(data['timesteps'][j])+","+str(data['results'][j][0]))
+    
 
     ############################################################
     ############################################################
@@ -118,28 +125,24 @@ def run(multiagent=DEFAULT_MA, action_space = DEFAULT_ACTION_STRING, train_steps
     ############################################################
 
     if local:
+
         input("Press Enter to continue...")
 
-    if os.path.isfile(filename+'/final_model.zip'):
-        path = filename+'/final_model.zip'
-    elif os.path.isfile(filename+'/best_model.zip'):
+    # if os.path.isfile(filename+'/final_model.zip'):
+    #     path = filename+'/final_model.zip'
+    if os.path.isfile(filename+'/best_model.zip'):
         path = filename+'/best_model.zip'
     else:
         print("[ERROR]: no model under the specified path", filename)
-    model = PPO.load(path)
+    model = SafetySAC.load(path)
 
-    print("model loaded: " , model)
     #### Show (and record a video of) the model's performance ##
     if not multiagent:
-        print("loading not multiagent")
-        print("reached")
         test_env = SafeHoverAviary(gui=gui,
                                obs=DEFAULT_OBS,
                                act=act_space,
                                record=record_video)
         test_env_nogui = SafeHoverAviary(obs=DEFAULT_OBS, act=act_space)
-        
-        
     else:
         test_env = MultiHoverAviary(gui=gui,
                                         num_drones=DEFAULT_AGENTS,
@@ -152,8 +155,9 @@ def run(multiagent=DEFAULT_MA, action_space = DEFAULT_ACTION_STRING, train_steps
                 output_folder=output_folder,
                 colab=colab
                 )
-    print("reached 2")
     
+    test_env_nogui = ObsSqueezeWrapper(test_env_nogui)
+
     mean_reward, std_reward = evaluate_policy(model,
                                               test_env_nogui,
                                               n_eval_episodes=10
