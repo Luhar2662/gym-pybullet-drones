@@ -60,6 +60,7 @@ class SafeHoverAviary(BaseRLAviary):
         self.WARMUP_DUR = warmup_dur
         self.RANDOM_INIT = random_init
         self.SEGMENT_PATH = segment_path
+        self.RANDOM_TARGET = None
         self.TARGET_POS = np.array([0,0,1])
         self.EPISODE_LEN_SEC = 8
         super().__init__(drone_model=drone_model,
@@ -209,68 +210,90 @@ class SafeHoverAviary(BaseRLAviary):
         else:
             #random init within: x in (-1,1), y in (-1,1), z in (.25,2)
 
-            target = np.array([[np.random.uniform(-1,1),
-                               np.random.uniform(-1,1),
-                               np.random.uniform(.1, 2)] for i in range(self.NUM_DRONES)])
-        print("starting warmup! target: ", target, " warmup number: ", self.warmup_called)
+            #check if precomputed: if so, simply load target. If not (first run), manually move to target
+
+            if self.RANDOM_TARGET is None:
+                control_loop = True
+                target = np.array([[np.random.uniform(-1,1),
+                                np.random.uniform(-1,1),
+                                np.random.uniform(.1, 2)] for i in range(self.NUM_DRONES)])
+            else:
+                control_loop = False
+                target = self.RANDOM_TARGET
+            
+        print("starting warmup!! target: ", target, " warmup number: ", self.warmup_called)
         self.warmup_called += 1
+        if control_loop:
+            print("calling control loop (first run only)")
             
-        waypoints = np.array([self.segment(self.INIT_XYZS[i], target[i], self.NUM_SEGMENTS) for i in range(self.NUM_DRONES)])
-        #print("waypoints: ", waypoints.shape)
-        waypoint_ct = 0
-        waypoint_dur = self.WARMUP_DUR / self.NUM_SEGMENTS
+            waypoints = np.array([self.segment(self.INIT_XYZS[i], target[i], self.NUM_SEGMENTS) for i in range(self.NUM_DRONES)])
+            #print("waypoints: ", waypoints.shape)
+            waypoint_ct = 0
+            waypoint_dur = self.WARMUP_DUR / self.NUM_SEGMENTS
             
-        #print("target: ", target)
-        #TODO: Use ctrl_aviary or _nextstep() calcs to get to setpoint.
-        ctrl_client = DSLPIDControl(drone_model = self.DRONE_MODEL)
-        ctrl_client = [DSLPIDControl(drone_model = self.DRONE_MODEL) for i in range(self.NUM_DRONES)]
+            #print("target: ", target)
+            #TODO: Use ctrl_aviary or _nextstep() calcs to get to setpoint.
+            ctrl_client = DSLPIDControl(drone_model = self.DRONE_MODEL)
+            ctrl_client = [DSLPIDControl(drone_model = self.DRONE_MODEL) for i in range(self.NUM_DRONES)]
 
 
-        #print(warmup called) -- verified that this runs each ep.
-        #useful env params: initial_xyzs, initial_rpys, pyb_freq, self.PYB_STEPS_PET_CTRL, self.CLIENT (phys client)
+            #print(warmup called) -- verified that this runs each ep.
+            #useful env params: initial_xyzs, initial_rpys, pyb_freq, self.PYB_STEPS_PET_CTRL, self.CLIENT (phys client)
 
-        action = np.zeros((self.NUM_DRONES, 4))
-
-        # STOPPED HERE IN REWRITING!!!
-
-        for i in range(0, int(self.WARMUP_DUR*self.CTRL_FREQ)):
-            #step the env:
-            #print("calling step with action: ", action)
+            action = np.zeros((self.NUM_DRONES, 4))
+        
+        
+            first_step = True
+            for i in range(0, int(self.WARMUP_DUR*self.CTRL_FREQ)):
+                #step the env:
+                #print("calling step with action: ", action)
             
-            if i != 0 and (i % (waypoint_dur*self.CTRL_FREQ)==0) and self.SEGMENT_PATH:
-                waypoint_ct = waypoint_ct + 1
+            
+                if i != 0 and (i % (waypoint_dur*self.CTRL_FREQ)==0) and self.SEGMENT_PATH:
+                    waypoint_ct = waypoint_ct + 1
         
 
-            obs, reward, terminated, truncated, info = self.step(action)
-            #print("Observation given back: ", obs)
-            control_obs = self._computeObsForControl()
+                obs, reward, terminated, truncated, info = self.step(action)
+                #print("Observation given back: ", obs)
+                control_obs = self._computeObsForControl()
+
+                #PROBLEM -- DESYNCED / LAGGING BY ONE. CUSTOM ASSIGNMENT IS WORKING THOUGH!
+                if first_step:
+                    print("starting position: ", control_obs[0])
+                    first_step = False
+            
             
 
 
-            #### Compute control for the current way point #############
+                #### Compute control for the current way point #############
         
-            for j in range(self.NUM_DRONES):
-                if self.SEGMENT_PATH:
-                    target_wp = waypoints[j, waypoint_ct, :]
-                else:
-                    target_wp = np.hstack([target[j,0:2], target[j, 2]])
-                #print("target shape: ", np.hstack([target[j,0:2], target[j, 2]]))
+                for j in range(self.NUM_DRONES):
+                    if self.SEGMENT_PATH:
+                        target_wp = waypoints[j, waypoint_ct, :]
+                    else:
+                        target_wp = np.hstack([target[j,0:2], target[j, 2]])
+                    #print("target shape: ", np.hstack([target[j,0:2], target[j, 2]]))
 
-                #for i in range(num_drones):
-                    #print("waypoints: ", segment(INIT_XYZS[i], target[0], num_segments))
-                    #current waypoint: waypoints[waypoint_ct, j, 0:2]
+                    #for i in range(num_drones):
+                        #print("waypoints: ", segment(INIT_XYZS[i], target[0], num_segments))
+                        #current waypoint: waypoints[waypoint_ct, j, 0:2]
             
 
-                action[j, :], _, _ = ctrl_client[j].computeControlFromState(control_timestep=self.CTRL_TIMESTEP,
+                    action[j, :], _, _ = ctrl_client[j].computeControlFromState(control_timestep=self.CTRL_TIMESTEP,
                                                                     state=control_obs[j],
                                                                     target_pos=target_wp,
                                                                     #target_pos=np.hstack([target[j,0:2], target[j, 2]]),
                                                                     # target_pos=INIT_XYZS[j, :] + TARGET_POS[wp_counters[j], :],
                                                                     target_rpy=self.INIT_RPYS[j, :]
                                                                     )
-            #skip logging
+                #skip logging
         
-
+        
+        #pre-compute next target!
+        self.RANDOM_TARGET = np.array([[np.random.uniform(-1,1),
+                               np.random.uniform(-1,1),
+                               np.random.uniform(.1, 2)] for i in range(self.NUM_DRONES)])
+        self.INIT_XYZS = self.RANDOM_TARGET
 
 
 
