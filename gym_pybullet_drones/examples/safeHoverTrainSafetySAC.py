@@ -29,6 +29,9 @@ from gym_pybullet_drones.envs.MultiHoverAviary import MultiHoverAviary
 from gym_pybullet_drones.utils.utils import sync, str2bool
 from gym_pybullet_drones.utils.enums import ObservationType, ActionType
 
+from wandb.integration.sb3 import WandbCallback
+import wandb
+
 class ObsSqueezeWrapper(gym.Wrapper):
     def reset(self, **kwargs):
         obs, info = self.env.reset(**kwargs)
@@ -65,7 +68,7 @@ def run(multiagent=DEFAULT_MA, action_space = DEFAULT_ACTION_STRING, train_steps
     if not multiagent:
         train_env = make_vec_env(SafeHoverAviary,
                                  env_kwargs=dict(obs=DEFAULT_OBS, act=act_space, random_init=random_init),
-                                 n_envs=1,
+                                 n_envs=4,
                                  seed=0
                                  )#check if randinit needs to be passed to eval_env
         eval_env = SafeHoverAviary(obs=DEFAULT_OBS, act=act_space, random_init = random_init)
@@ -84,9 +87,26 @@ def run(multiagent=DEFAULT_MA, action_space = DEFAULT_ACTION_STRING, train_steps
     print('[INFO] Observation space:', train_env.observation_space)
 
     #### Train the model #######################################
+    
+    
+    config = {
+        "policy_type": "MlpPolicy", #STOPPED HERE!
+        "total_timesteps": 10000000,
+        "env_name": "SafeHoverAviary"
+
+    }
+
+    wandb_run = wandb.init(
+        project="SafeDroneFlight",
+        config = config,
+        sync_tensorboard=True,
+        monitor_gym=False,
+        save_code=False,
+    )
+
     model = SafetySAC('MlpPolicy',
                 train_env,
-                # tensorboard_log=filename+'/tb/',
+                tensorboard_log=f"runs/{wandb_run.id}",
                 verbose=1)
 
     #### Target cumulative rewards (problem-dependent) ##########
@@ -104,8 +124,13 @@ def run(multiagent=DEFAULT_MA, action_space = DEFAULT_ACTION_STRING, train_steps
                                  eval_freq=int(1000),
                                  deterministic=True,
                                  render=False)
+    wandb_callback = WandbCallback(
+        gradient_save_freq=100,
+        model_save_path=f"models/{wandb_run.id}",
+        verbose = 2,
+    )
     model.learn(total_timesteps=train_steps if local else int(1e2), # shorter training in GitHub Actions pytest
-                callback=eval_callback,
+                callback=[eval_callback, wandb_callback],
                 log_interval=100)
 
     #### Save the model ########################################

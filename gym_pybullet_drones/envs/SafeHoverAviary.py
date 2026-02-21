@@ -61,6 +61,7 @@ class SafeHoverAviary(BaseRLAviary):
         self.RANDOM_INIT = random_init
         self.SEGMENT_PATH = segment_path
         self.RANDOM_TARGET = None
+        self.RANDOM_TARGET_RPY = None
         self.TARGET_POS = np.array([0,0,1])
         self.EPISODE_LEN_SEC = 8
         super().__init__(drone_model=drone_model,
@@ -217,11 +218,16 @@ class SafeHoverAviary(BaseRLAviary):
                 target = np.array([[np.random.uniform(-1,1),
                                 np.random.uniform(-1,1),
                                 np.random.uniform(.1, 2)] for i in range(self.NUM_DRONES)])
+                target_rpy = np.array([[np.random.uniform(-np.pi/3,np.pi/3),
+                            np.random.uniform(-np.pi/3,np.pi/3),
+                            np.random.uniform(-np.pi/3,np.pi/3),
+                            ] for i in range(self.NUM_DRONES)])
             else:
                 control_loop = False
                 target = self.RANDOM_TARGET
+                target_rpy = self.RANDOM_TARGET_RPY
             
-        print("starting warmup!! target: ", target, " warmup number: ", self.warmup_called)
+        print("starting warmup!! target: ", target, " ", target_rpy, " warmup number: ", self.warmup_called)
         self.warmup_called += 1
         if control_loop:
             print("calling control loop (first run only)")
@@ -293,7 +299,12 @@ class SafeHoverAviary(BaseRLAviary):
         self.RANDOM_TARGET = np.array([[np.random.uniform(-1,1),
                                np.random.uniform(-1,1),
                                np.random.uniform(.1, 2)] for i in range(self.NUM_DRONES)])
+        self.RANDOM_TARGET_RPY = np.array([[np.random.uniform(-np.pi/2,np.pi/3),
+                            np.random.uniform(-np.pi/3,np.pi/3),
+                            np.random.uniform(-np.pi/3,np.pi/3),
+                            ] for i in range(self.NUM_DRONES)])
         self.INIT_XYZS = self.RANDOM_TARGET
+        self.INIT_RPYS = self.RANDOM_TARGET_RPY
 
 
 

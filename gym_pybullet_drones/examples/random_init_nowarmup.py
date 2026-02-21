@@ -87,9 +87,14 @@ def run(
     target = np.array([[np.random.uniform(-1,1),
                                np.random.uniform(-1,1),
                                np.random.uniform(.1, 2)] for i in range(num_drones)])
+    
+    target_rpy = np.array([[np.random.uniform(-np.pi/2,np.pi/3),
+                            np.random.uniform(-np.pi/3,np.pi/3),
+                            np.random.uniform(-np.pi/3,np.pi/3),
+    ] for i in range(num_drones)])
 
     INIT_XYZS = target
-    INIT_RPYS = np.array([[0, 0,  i * (np.pi/2)/num_drones] for i in range(num_drones)])
+    INIT_RPYS = target_rpy
     
     
     
