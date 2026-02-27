@@ -9,6 +9,8 @@ tmp/
 
 # Learning results
 experiments/learning/results/save-*
+wandb/
+gym-pybullet-drones/gym_pybullet_drones/examples/wandb
 
 # Betaflight
 betaflight_sitl/

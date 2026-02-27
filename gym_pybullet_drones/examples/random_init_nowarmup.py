@@ -93,6 +93,8 @@ def run(
                             np.random.uniform(-np.pi/3,np.pi/3),
     ] for i in range(num_drones)])
 
+    
+
     INIT_XYZS = target
     INIT_RPYS = target_rpy
     

@@ -298,8 +298,8 @@ class SafeHoverAviary(BaseRLAviary):
         #pre-compute next target!
         self.RANDOM_TARGET = np.array([[np.random.uniform(-1,1),
                                np.random.uniform(-1,1),
-                               np.random.uniform(.1, 2)] for i in range(self.NUM_DRONES)])
-        self.RANDOM_TARGET_RPY = np.array([[np.random.uniform(-np.pi/2,np.pi/3),
+                               np.random.uniform(.05, 2)] for i in range(self.NUM_DRONES)])
+        self.RANDOM_TARGET_RPY = np.array([[np.random.uniform(-np.pi/3,np.pi/3),
                             np.random.uniform(-np.pi/3,np.pi/3),
                             np.random.uniform(-np.pi/3,np.pi/3),
                             ] for i in range(self.NUM_DRONES)])

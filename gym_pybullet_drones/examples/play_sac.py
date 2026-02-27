@@ -3,6 +3,7 @@ import time
 import argparse
 import numpy as np
 import gymnasium as gym
+import torch as th
 from stable_baselines3 import PPO
 from gym_pybullet_drones.envs.HoverAviary import HoverAviary
 from gym_pybullet_drones.envs.MultiHoverAviary import MultiHoverAviary
@@ -30,11 +31,13 @@ def play(model_path=DEFAULT_MODEL_PATH, multiagent=DEFAULT_MA, gui=DEFAULT_GUI, 
     model = SafetySAC.load(model_path)
     print(f"[INFO] Loaded model from {model_path}")
 
-    critic1 = model.policy.qf1
-    critic2 = model.policy.qf2
+    critic1 = model.policy.critic.qf0
+    critic2 = model.policy.critic.qf1
 
     def critic_check(state, action):
-        return (critic1(state, action) + critic2(state, action)) * .5
+        with th.no_grad():
+            q1, q2 = model.policy.critic(state, action)
+        return q1, q2
 
     if random_init:
         start_pos = np.array([[np.random.uniform(-1,1),
@@ -107,7 +110,9 @@ def play(model_path=DEFAULT_MODEL_PATH, multiagent=DEFAULT_MA, gui=DEFAULT_GUI, 
             print("Safety violation: state is [",obs2[0],", ", obs2[1],", ", obs2[2],"]")
             print("pausing for 2 seconds")
             time.sleep(2)
-        print("qnet average predicts: ", critic_check(obs, action), ", for obs: ", obs2, ", act: ", act2)
+        obs_t, _ = model.policy.obs_to_tensor(obs)
+        act_t = th.as_tensor(action, device=model.device).float()
+        print("qnet average predicts: ", critic_check(obs_t, act_t), ", for obs: ", obs2[0:3], ", act: ", act2)
 
         env.render()
         sync(i, start, env.CTRL_TIMESTEP)
