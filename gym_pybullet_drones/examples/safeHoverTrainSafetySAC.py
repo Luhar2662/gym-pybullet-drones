@@ -57,8 +57,11 @@ DEFAULT_STEPS = 1000000
 DEFAULT_SEGMENT_PATH = True
 DEFAULT_NUM_SEGMENTS = 1
 DEFAULT_RANDOM_INIT = False
+DEFAULT_BIASED_RANDOM = True
+DEFAULT_BIASED_RANDOM_THRESHOLD = .5
 
-def run(multiagent=DEFAULT_MA, action_space = DEFAULT_ACTION_STRING, train_steps=DEFAULT_STEPS, output_folder=DEFAULT_OUTPUT_FOLDER, gui=DEFAULT_GUI, plot=True, colab=DEFAULT_COLAB, record_video=DEFAULT_RECORD_VIDEO, local=True, segment_path = DEFAULT_SEGMENT_PATH, num_segments = DEFAULT_NUM_SEGMENTS, random_init = DEFAULT_RANDOM_INIT):
+def run(multiagent=DEFAULT_MA, action_space = DEFAULT_ACTION_STRING, train_steps=DEFAULT_STEPS, output_folder=DEFAULT_OUTPUT_FOLDER, gui=DEFAULT_GUI, plot=True, colab=DEFAULT_COLAB, record_video=DEFAULT_RECORD_VIDEO, local=True, segment_path = DEFAULT_SEGMENT_PATH, num_segments = DEFAULT_NUM_SEGMENTS, random_init = DEFAULT_RANDOM_INIT,
+        biased_random=DEFAULT_BIASED_RANDOM, bias_threshold=DEFAULT_BIASED_RANDOM_THRESHOLD):
     filename = os.path.join(output_folder, 'save-'+datetime.now().strftime("%m.%d.%Y_%H.%M.%S"))
     if not os.path.exists(filename):
         os.makedirs(filename+'/')
@@ -67,7 +70,7 @@ def run(multiagent=DEFAULT_MA, action_space = DEFAULT_ACTION_STRING, train_steps
     print("creating safehoverenv with random_init value: ", random_init)
     if not multiagent:
         train_env = make_vec_env(SafeHoverAviary,
-                                 env_kwargs=dict(obs=DEFAULT_OBS, act=act_space, random_init=random_init),
+                                 env_kwargs=dict(obs=DEFAULT_OBS, act=act_space, random_init=random_init, biased_random=biased_random, bias_threshold=bias_threshold),
                                  n_envs=4,
                                  seed=0
                                  )#check if randinit needs to be passed to eval_env
@@ -244,6 +247,8 @@ if __name__ == '__main__':
     parser.add_argument('--segment_path', default=DEFAULT_SEGMENT_PATH, type=str2bool,           help='Whether we segment the path to a random target (needed for bigger boxes)', metavar='')
     parser.add_argument('--num_segments', default=DEFAULT_NUM_SEGMENTS, type=int,           help='How many segments to make', metavar='')
     parser.add_argument('--random_init', default=DEFAULT_RANDOM_INIT, type=str2bool,           help='whether to call warmup() and randomize starting positions for policy training', metavar='')
+    parser.add_argument('--biased_random', default=DEFAULT_BIASED_RANDOM, type=str2bool,           help='when calling warmup(), whether to initialize uniformly across full space, or to use biased random sampling', metavar='')
+    parser.add_argument('--bias_threshold', default=DEFAULT_BIASED_RANDOM_THRESHOLD, type=float,           help='threshold for biased random flag', metavar='')
     ARGS = parser.parse_args()
 
     run(**vars(ARGS))

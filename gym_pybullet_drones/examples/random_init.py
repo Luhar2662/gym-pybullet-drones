@@ -41,7 +41,7 @@ DEFAULT_PLOT = True
 DEFAULT_USER_DEBUG_GUI = False
 DEFAULT_OBSTACLES = True
 DEFAULT_SIMULATION_FREQ_HZ = 240
-DEFAULT_CONTROL_FREQ_HZ = 48
+DEFAULT_CONTROL_FREQ_HZ = 30
 DEFAULT_DURATION_SEC = 12
 DEFAULT_OUTPUT_FOLDER = 'results'
 DEFAULT_COLAB = False
@@ -167,6 +167,23 @@ def run(
         
 
         obs, reward, terminated, truncated, info = env.step(action)
+
+        cid = env.getPyBulletClient()
+        drone_id = env.DRONE_IDS[0]  # adjust if your env names this differently
+
+        pos, orn = p.getBasePositionAndOrientation(drone_id, physicsClientId=cid)
+        vel, ang = p.getBaseVelocity(drone_id, physicsClientId=cid)
+
+        #ctrl_state = env._computeObsForControl()[0]   # what you feed PID
+
+        print("PYB  z/vz:", pos[2], vel[2])
+        print("CTRL z/vz:", float(obs[0][2]), float(obs[0][2]))
+
+        print("ACT_TYPE:", getattr(env, "ACT_TYPE", None))
+        print("action_space.low/high:", env.action_space.low, env.action_space.high)
+        print("MAX_RPM:", getattr(env, "MAX_RPM", None))
+        print("HOVER_RPM:", getattr(env, "HOVER_RPM", None))
+        time.sleep(10)
         #print("Observation given back: ", obs)
 
         #### Compute control for the current way point #############
@@ -182,6 +199,7 @@ def run(
                 #print("waypoints: ", segment(INIT_XYZS[i], target[0], num_segments))
                 #current waypoint: waypoints[waypoint_ct, j, 0:2]
             
+            
 
             action[j, :], _, _ = ctrl[j].computeControlFromState(control_timestep=env.CTRL_TIMESTEP,
                                                                     state=obs[j],
@@ -190,6 +208,12 @@ def run(
                                                                     # target_pos=INIT_XYZS[j, :] + TARGET_POS[wp_counters[j], :],
                                                                     target_rpy=INIT_RPYS[j, :]
                                                                     )
+            print("ctrl obs being used: ", obs[j])
+            print("target passed: ", target_wp)
+            print("action generated: ", action[j, :])
+            print("control timestep: ", env.CTRL_TIMESTEP, ", control frequency: ", env.CTRL_FREQ)
+            
+
 
         #### Go to the next way point and loop #####################
         #for j in range(num_drones):

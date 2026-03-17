@@ -86,6 +86,11 @@ def target_generate(num_drones = 1) -> np.ndarray:
                                np.random.uniform(-1,1),
                                np.random.uniform(.1, 2)] for i in range(num_drones)])
 
+def process_action(rpm, hover_rpm):
+    # rpm: (N,4) raw rpm from DSLPIDControl --> convert to expected input for BaseRLAviary controls
+    a = (rpm / hover_rpm - 1.0) / 0.05
+    return np.clip(a, -1.0, 1.0).astype(np.float32)
+
 def run(
         drone=DEFAULT_DRONES,
         num_drones=DEFAULT_NUM_DRONES,
@@ -174,28 +179,6 @@ def run(
 
 
 
-    #### Debug trajectory ######################################
-    #### Uncomment alt. target_pos in .computeControlFromState()
-    # INIT_XYZS = np.array([[.3 * i, 0, .1] for i in range(num_drones)])
-    # INIT_RPYS = np.array([[0, 0,  i * (np.pi/3)/num_drones] for i in range(num_drones)])
-    # NUM_WP = control_freq_hz*15
-    # TARGET_POS = np.zeros((NUM_WP,3))
-    # for i in range(NUM_WP):
-    #     if i < NUM_WP/6:
-    #         TARGET_POS[i, :] = (i*6)/NUM_WP, 0, 0.5*(i*6)/NUM_WP
-    #     elif i < 2 * NUM_WP/6:
-    #         TARGET_POS[i, :] = 1 - ((i-NUM_WP/6)*6)/NUM_WP, 0, 0.5 - 0.5*((i-NUM_WP/6)*6)/NUM_WP
-    #     elif i < 3 * NUM_WP/6:
-    #         TARGET_POS[i, :] = 0, ((i-2*NUM_WP/6)*6)/NUM_WP, 0.5*((i-2*NUM_WP/6)*6)/NUM_WP
-    #     elif i < 4 * NUM_WP/6:
-    #         TARGET_POS[i, :] = 0, 1 - ((i-3*NUM_WP/6)*6)/NUM_WP, 0.5 - 0.5*((i-3*NUM_WP/6)*6)/NUM_WP
-    #     elif i < 5 * NUM_WP/6:
-    #         TARGET_POS[i, :] = ((i-4*NUM_WP/6)*6)/NUM_WP, ((i-4*NUM_WP/6)*6)/NUM_WP, 0.5*((i-4*NUM_WP/6)*6)/NUM_WP
-    #     elif i < 6 * NUM_WP/6:
-    #         TARGET_POS[i, :] = 1 - ((i-5*NUM_WP/6)*6)/NUM_WP, 1 - ((i-5*NUM_WP/6)*6)/NUM_WP, 0.5 - 0.5*((i-5*NUM_WP/6)*6)/NUM_WP
-    # wp_counters = np.array([0 for i in range(num_drones)])
-
-
     #### Obtain the PyBullet Client ID from the environment ####
     PYB_CLIENT = env.getPyBulletClient()
 
@@ -211,6 +194,7 @@ def run(
     #### Initialize the controllers ############################
     if drone in [DroneModel.CF2X, DroneModel.CF2P]:
         ctrl = [DSLPIDControl(drone_model=drone) for i in range(num_drones)]
+    ctrl = [DSLPIDControl(drone_model = drone) for i in range(env.NUM_DRONES)]
 
     #### Run the simulation ####################################
     action = np.zeros((num_drones,4))
@@ -226,6 +210,25 @@ def run(
         #### Step the simulation ###################################
         #Update step:
         obs, reward, terminated, truncated, info = env.step(action)
+
+        '''
+        cid = env.getPyBulletClient()
+        drone_id = env.DRONE_IDS[0]  # adjust if your env names this differently
+
+        pos, orn = p.getBasePositionAndOrientation(drone_id, physicsClientId=cid)
+        vel, ang = p.getBaseVelocity(drone_id, physicsClientId=cid)
+
+        ctrl_state = env._computeObsForControl()[0]   # what you feed PID
+
+        print("PYB  z/vz:", pos[2], vel[2])
+        print("CTRL z/vz:", float(ctrl_state[2]), float(ctrl_state[12]))
+
+        print("ACT_TYPE:", getattr(env, "ACT_TYPE", None))
+        print("action_space.low/high:", env.action_space.low, env.action_space.high)
+        print("MAX_RPM:", getattr(env, "MAX_RPM", None))
+        print("HOVER_RPM:", getattr(env, "HOVER_RPM", None))
+        time.sleep(10)
+        '''
         
         #update waypoint counter if needed
         if i != 0 and (i % (waypoint_dur*env.CTRL_FREQ)==0) and segment_path:
@@ -241,7 +244,7 @@ def run(
                 target_wp = waypoints[j, waypoint_ct, :]
             else:
                 target_wp = np.hstack([target[j,0:2], target[j, 2]])
-            print("target shape: ", np.hstack([target[j,0:2], target[j, 2]]))
+            #print("target shape: ", np.hstack([target[j,0:2], target[j, 2]]))
 
             #for i in range(num_drones):
                 #print("waypoints: ", segment(INIT_XYZS[i], target[0], num_segments))
@@ -255,7 +258,17 @@ def run(
                                                                     # target_pos=INIT_XYZS[j, :] + TARGET_POS[wp_counters[j], :],
                                                                     target_rpy=INIT_RPYS[j, :]
                                                                     )
+            raw_action = action.copy() #figure out which needed for qPred!!!
+            action = process_action(raw_action, env.HOVER_RPM)
         #now, action holds the recommended action!
+        #print("SafeHoverAviary state: ", obs)
+        print("target is: ", target)
+        print("current ctrl state is: ", ctrl_obs)
+        print("computed action from ctrl (preprocessed is: ", action)
+        print("control timestep: ", env.CTRL_TIMESTEP, ", control frequency: ", env.CTRL_FREQ)
+        #time.sleep(2)
+
+        
         fallback, _ = model.predict(obs, deterministic = True)
 
         obs2 = obs.squeeze()
@@ -273,7 +286,7 @@ def run(
             print("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
             print("Safety violation: state is [",obs2[0],", ", obs2[1],", ", obs2[2],"]")
             print("pausing for 2 seconds")
-            time.sleep(2)
+            #time.sleep(2)
 
         obs_t, _ = model.policy.obs_to_tensor(obs)
         act_t = th.as_tensor(action, device=model.device).float()

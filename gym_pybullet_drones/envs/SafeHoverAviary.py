@@ -5,6 +5,7 @@ import pybullet_data
 from gym_pybullet_drones.control.DSLPIDControl import DSLPIDControl
 from gym_pybullet_drones.envs.BaseRLAviary import BaseRLAviary
 from gym_pybullet_drones.utils.enums import DroneModel, Physics, ActionType, ObservationType
+import time
 
 class SafeHoverAviary(BaseRLAviary):
     """Variation of single agent hover env -- uses margin for reward"""
@@ -25,7 +26,10 @@ class SafeHoverAviary(BaseRLAviary):
                  warmup_dur = 3,
                  random_init = False,
                  obs: ObservationType=ObservationType.KIN,
-                 act: ActionType=ActionType.RPM
+                 act: ActionType=ActionType.RPM,
+                 biased_random = True,
+                 bias_threshold = .5,
+                 random_eval = False
                  ):
         """Initialization of a single agent RL environment.
 
@@ -64,6 +68,9 @@ class SafeHoverAviary(BaseRLAviary):
         self.RANDOM_TARGET_RPY = None
         self.TARGET_POS = np.array([0,0,1])
         self.EPISODE_LEN_SEC = 8
+        self.BIASED_RANDOM = biased_random,
+        self.BIAS_THRESHOLD = bias_threshold
+        self.RANDOM_EVAL = random_eval
         super().__init__(drone_model=drone_model,
                          num_drones=1,
                          initial_xyzs=initial_xyzs,
@@ -262,6 +269,9 @@ class SafeHoverAviary(BaseRLAviary):
                 obs, reward, terminated, truncated, info = self.step(action)
                 #print("Observation given back: ", obs)
                 control_obs = self._computeObsForControl()
+                #print("env observation: ", obs)
+                #print("control obs: ", control_obs)
+                #time.sleep(30)
 
                 #PROBLEM -- DESYNCED / LAGGING BY ONE. CUSTOM ASSIGNMENT IS WORKING THOUGH!
                 if first_step:
@@ -296,17 +306,87 @@ class SafeHoverAviary(BaseRLAviary):
         
         
         #pre-compute next target!
-        self.RANDOM_TARGET = np.array([[np.random.uniform(-1,1),
+
+        if self.RANDOM_EVAL:
+            self.RANDOM_TARGET, self.RANDOM_TARGET_RPY = self.eval_random_target()
+        elif self.BIASED_RANDOM:
+            self.RANDOM_TARGET, self.RANDOM_TARGET_RPY = self.biased_random_target()
+        else:
+            self.RANDOM_TARGET, self.RANDOM_TARGET_RPY = self.random_target()
+        
+        
+
+        self.INIT_XYZS = self.RANDOM_TARGET
+        self.INIT_RPYS = self.RANDOM_TARGET_RPY
+    
+    ################################################################################
+
+    def random_target(self):
+
+        random_target = np.array([[np.random.uniform(-1,1),
                                np.random.uniform(-1,1),
                                np.random.uniform(.05, 2)] for i in range(self.NUM_DRONES)])
-        self.RANDOM_TARGET_RPY = np.array([[np.random.uniform(-np.pi/3,np.pi/3),
+        random_target_rpy = np.array([[np.random.uniform(-np.pi/3,np.pi/3),
                             np.random.uniform(-np.pi/3,np.pi/3),
                             np.random.uniform(-np.pi/3,np.pi/3),
                             ] for i in range(self.NUM_DRONES)])
-        self.INIT_XYZS = self.RANDOM_TARGET
-        self.INIT_RPYS = self.RANDOM_TARGET_RPY
+        
+        return random_target, random_target_rpy
+    
+    ################################################################################
 
+    def biased_random_target(self):
 
+        intervals = [[-1.0,-.5],[.5,1.0]]
+        z_intervals = [[.05,.5],[1.5,2.0]]
+
+        bias = np.random.rand()
+        if bias > self.BIAS_THRESHOLD:
+            x_int = np.random.choice([0,1])
+            y_int = np.random.choice([0,1])
+            z_int = np.random.choice([0,1])
+
+            random_target = np.array([[np.random.uniform(intervals[x_int][0],intervals[x_int][1]),
+                               np.random.uniform(intervals[y_int][0],intervals[y_int][1]),
+                               np.random.uniform(z_intervals[z_int][0],z_intervals[z_int][1])] for i in range(self.NUM_DRONES)])
+        else:
+            random_target = np.array([[np.random.uniform(-1,1),
+                               np.random.uniform(-1,1),
+                               np.random.uniform(.05, 2)] for i in range(self.NUM_DRONES)])
+
+        random_target_rpy = np.array([[np.random.uniform(-np.pi/3,np.pi/3),
+                            np.random.uniform(-np.pi/3,np.pi/3),
+                            np.random.uniform(-np.pi/3,np.pi/3),
+                            ] for i in range(self.NUM_DRONES)])
+        
+        return random_target, random_target_rpy
+    
+    ################################################################################
+
+    def eval_random_target(self):
+
+        '''
+        Pull from a specific safety margin with certainty, such that we always initialize from meaningful
+        positions for testing!
+        '''
+        
+        intervals = [[-.9,-.5],[.5,.9]]
+        z_intervals = [[.1,.5],[1.5,1.9]]
+
+        x_int = np.random.choice([0,1])
+        y_int = np.random.choice([0,1])
+        z_int = np.random.choice([0,1])
+
+        random_target = np.array([[np.random.uniform(intervals[x_int][0],intervals[x_int][1]),
+                               np.random.uniform(intervals[y_int][0],intervals[y_int][1]),
+                               np.random.uniform(z_intervals[z_int][0],z_intervals[z_int][1])] for i in range(self.NUM_DRONES)])
+
+        random_target_rpy = np.array([[np.random.uniform(-np.pi/3,np.pi/3),
+                            np.random.uniform(-np.pi/3,np.pi/3),
+                            np.random.uniform(-np.pi/3,np.pi/3),
+                            ] for i in range(self.NUM_DRONES)])
+        
+        return random_target, random_target_rpy
 
     ################################################################################
 
