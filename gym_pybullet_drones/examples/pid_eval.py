@@ -172,6 +172,10 @@ def run(
     else:
         env = MultiHoverAviary(gui=gui, num_drones=DEFAULT_AGENTS, obs=DEFAULT_OBS, act=DEFAULT_ACT)
 
+    # Align SafeHoverAviary's termination target with the PID's actual random target
+    # (SafeHoverAviary.TARGET_POS defaults to [0,0,1] which causes spurious episode termination)
+    env.TARGET_POS = target[0]
+
     logger = Logger(logging_freq_hz=int(env.CTRL_FREQ),
                     num_drones=DEFAULT_AGENTS if multiagent else 1,
                     output_folder="logs_playback/",
@@ -210,6 +214,13 @@ def run(
         #### Step the simulation ###################################
         #Update step:
         obs, reward, terminated, truncated, info = env.step(action)
+
+        # Handle episode end: reset env and PID integral state
+        if terminated or truncated:
+            print(f"[INFO] Episode ended at step {i} (terminated={terminated}, truncated={truncated}). Resetting.")
+            obs, _ = env.reset(seed=42, options={})
+            for c in ctrl:
+                c.reset()
 
         '''
         cid = env.getPyBulletClient()
@@ -258,8 +269,11 @@ def run(
                                                                     # target_pos=INIT_XYZS[j, :] + TARGET_POS[wp_counters[j], :],
                                                                     target_rpy=INIT_RPYS[j, :]
                                                                     )
-            raw_action = action.copy() #figure out which needed for qPred!!!
-            action = process_action(raw_action, env.HOVER_RPM)
+        raw_action = action.copy() #figure out which needed for qPred!!!
+        rpm_scale = env.MAX_RPM / env.HOVER_RPM - 1
+        #action = process_action(raw_action, env.HOVER_RPM)
+        action = np.clip((raw_action / env.HOVER_RPM - 1) / rpm_scale, -1.0, 1.0).astype(np.float32)
+
         #now, action holds the recommended action!
         #print("SafeHoverAviary state: ", obs)
         print("target is: ", target)

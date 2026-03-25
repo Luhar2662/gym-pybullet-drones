@@ -45,6 +45,7 @@ DEFAULT_GUI = True
 DEFAULT_RECORD_VIDEO = False
 DEFAULT_OUTPUT_FOLDER = 'results'
 DEFAULT_COLAB = False
+DEFAULT_MODEL_PATH = "results/best_model.zip"
 
 DEFAULT_OBS = ObservationType('kin') # 'kin' or 'rgb'
 DEFAULT_ACTION_STRING = 'rpm'
@@ -62,7 +63,7 @@ DEFAULT_BIASED_RANDOM_THRESHOLD = .5
 
 def run(multiagent=DEFAULT_MA, action_space = DEFAULT_ACTION_STRING, train_steps=DEFAULT_STEPS, output_folder=DEFAULT_OUTPUT_FOLDER, 
         gui=DEFAULT_GUI, plot=True, colab=DEFAULT_COLAB, record_video=DEFAULT_RECORD_VIDEO, local=True, segment_path = DEFAULT_SEGMENT_PATH, num_segments = DEFAULT_NUM_SEGMENTS,
-        random_init = DEFAULT_RANDOM_INIT, biased_random=DEFAULT_BIASED_RANDOM, bias_threshold=DEFAULT_BIASED_RANDOM_THRESHOLD):
+        random_init = DEFAULT_RANDOM_INIT, biased_random=DEFAULT_BIASED_RANDOM, bias_threshold=DEFAULT_BIASED_RANDOM_THRESHOLD, model_path=DEFAULT_MODEL_PATH):
     
     '''
     action_space: one of 'rpm', 'pid', 'vel', 'one_d_rpm', 'one_d_pid'
@@ -91,7 +92,7 @@ def run(multiagent=DEFAULT_MA, action_space = DEFAULT_ACTION_STRING, train_steps
                                  )
     
     #Eval env using biased random, but has used uniform random in the past. This should better preserve the "best" model for filtering purposes
-    eval_env = SafeHoverAviary(obs=DEFAULT_OBS, act=act_space, random_init = random_init) 
+    eval_env = SafeHoverAviary(obs=DEFAULT_OBS, act=act_space, random_init = random_init, biased_random=biased_random, bias_threshold=bias_threshold) 
     
     
     
@@ -115,10 +116,14 @@ def run(multiagent=DEFAULT_MA, action_space = DEFAULT_ACTION_STRING, train_steps
         save_code=False,
     )
 
-    model = SafetySAC('MlpPolicy',
-                train_env,
-                tensorboard_log=f"runs/{wandb_run.id}",
-                verbose=1)
+    #### Load saved model ####
+    if not os.path.isfile(model_path):
+        print(f"[ERROR] Model file not found at: {model_path}")
+        return
+
+    model = SafetySAC.load(model_path)
+    model.set_env(train_env)
+    print(f"[INFO] Loaded model from {model_path}")
 
     #### Callbacks for evaluation and wandb ##################
     target_reward = 400.0
@@ -245,6 +250,7 @@ if __name__ == '__main__':
     parser.add_argument('--random_init', default=DEFAULT_RANDOM_INIT, type=str2bool,           help='whether to call warmup() and randomize starting positions for policy training', metavar='')
     parser.add_argument('--biased_random', default=DEFAULT_BIASED_RANDOM, type=str2bool,           help='when calling warmup(), whether to initialize uniformly across full space, or to use biased random sampling', metavar='')
     parser.add_argument('--bias_threshold', default=DEFAULT_BIASED_RANDOM_THRESHOLD, type=float,           help='threshold for biased random flag', metavar='')
+    parser.add_argument('--model_path', type=str, default=DEFAULT_MODEL_PATH, help='Path to saved policy zip file')
     ARGS = parser.parse_args()
 
     run(**vars(ARGS))

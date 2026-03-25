@@ -1,6 +1,9 @@
 import numpy as np
 
+import torch as th
+
 import pybullet as p
+
 import pybullet_data
 from gym_pybullet_drones.control.DSLPIDControl import DSLPIDControl
 from gym_pybullet_drones.envs.BaseRLAviary import BaseRLAviary
@@ -8,7 +11,7 @@ from gym_pybullet_drones.utils.enums import DroneModel, Physics, ActionType, Obs
 import time
 
 class SafeHoverAviary(BaseRLAviary):
-    """Variation of single agent hover env -- uses margin for reward"""
+    """Variation of the single-agent hover environment, using safety margins for rewards for compatibility with SafetySAC."""
 
     ################################################################################
     
@@ -29,7 +32,8 @@ class SafeHoverAviary(BaseRLAviary):
                  act: ActionType=ActionType.RPM,
                  biased_random = True,
                  bias_threshold = .5,
-                 random_eval = False
+                 random_eval = False,
+                 fallback_model = None,
                  ):
         """Initialization of a single agent RL environment.
 
@@ -57,6 +61,14 @@ class SafeHoverAviary(BaseRLAviary):
             The type of observation space (kinematic information or vision)
         act : ActionType, optional
             The type of action space (1 or 3D; RPMS, thurst and torques, or waypoint with PID control)
+        biased_random: bool, optional
+            Decides whether to use biased_random_target() when initializing from random_init
+        bias_threshold : float, optional
+            The percentage chance to sample uniformly as opposed to from the biased intervals when using biased_random_target()
+        fallback_model : SafetySAC Model, optional
+            For use with safe initialization and filtered training
+        random_eval: bool, optional
+            Decides whether to use random_eval_target() when initializing episodes
 
         """
         self.NUM_SEGMENTS = num_segments
@@ -71,6 +83,7 @@ class SafeHoverAviary(BaseRLAviary):
         self.BIASED_RANDOM = biased_random,
         self.BIAS_THRESHOLD = bias_threshold
         self.RANDOM_EVAL = random_eval
+        self.FALLBACK_MODEL = fallback_model
         super().__init__(drone_model=drone_model,
                          num_drones=1,
                          initial_xyzs=initial_xyzs,
@@ -188,6 +201,8 @@ class SafeHoverAviary(BaseRLAviary):
     ################################################################################
 
     def segment(self, init_xyzs, goal_pos, segments) -> np.ndarray:
+        '''Returns interim waypoints for pid manual warmup during _warmup()
+        '''
         target_waypoints = np.zeros((segments, 3))
         tot_offset = goal_pos - init_xyzs
 
@@ -387,6 +402,41 @@ class SafeHoverAviary(BaseRLAviary):
                             ] for i in range(self.NUM_DRONES)])
         
         return random_target, random_target_rpy
+    
+    ################################################################################
+
+    def safe_random_init(self):
+        if self.FALLBACK_MODEL is not None:
+            verified = False
+    
+            while not verified:
+                candidate_pos, candidate_rpy = self.eval_random_target()
+
+                #check viability using a helper env
+                test_env = SafeHoverAviary(gui=False, obs=self.OBS_TYPE, act=self.ACT_TYPE, initial_xyzs=candidate_pos, initial_rpys= candidate_rpy)
+
+                obs, _ = test_env.reset(seed=42, options={})
+                action, _ = self.FALLBACK_MODEL.predict(obs, deterministic=True)
+
+                obs_t, _ = self.FALLBACK_MODEL.policy.obs_to_tensor(obs)
+                act_t = th.as_tensor(action, device=self.FALLBACK_MODEL.device).float()
+
+                with th.no_grad():
+                    q1, q2 = self.FALLBACK_MODEL.policy.critic(obs_t, act_t)
+
+                q_avg = np.mean([q1.item(), q2.item()])
+
+                if q_avg > 0:
+                    verified = True
+                else: 
+                    print("unsafe config: ", candidate_pos, ", resampling!")
+    
+            #verified safe, so pass on!
+
+            return candidate_pos, candidate_rpy
+        
+        else:
+            raise ValueError("Cannot call safe init without passing a fallback model!")
 
     ################################################################################
 
@@ -421,7 +471,7 @@ class SafeHoverAviary(BaseRLAviary):
         #### Update and store the drones kinematic information #####
         self._updateAndStoreKinematicInformation()
         #### Warmup for RL methods -- move to a random setpoint. Modification from BaseAviary
-        print('random init: ', self.RANDOM_INIT)
+        #print('random init: ', self.RANDOM_INIT)
         if self.RANDOM_INIT:
             self._warmup()
         #### Start video recording #################################
