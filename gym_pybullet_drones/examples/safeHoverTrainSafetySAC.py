@@ -52,6 +52,7 @@ DEFAULT_ACT = ActionType('rpm') # 'rpm' or 'pid' or 'vel' or 'one_d_rpm' or 'one
 DEFAULT_AGENTS = 2
 DEFAULT_MA = False
 DEFAULT_STEPS = 1000000
+DEFAULT_GAMMA = .99
 
 # Default arguments for random initializing behavior defined in SafeHoverAviary
 DEFAULT_SEGMENT_PATH = True
@@ -62,7 +63,7 @@ DEFAULT_BIASED_RANDOM_THRESHOLD = .5
 
 def run(multiagent=DEFAULT_MA, action_space = DEFAULT_ACTION_STRING, train_steps=DEFAULT_STEPS, output_folder=DEFAULT_OUTPUT_FOLDER, 
         gui=DEFAULT_GUI, plot=True, colab=DEFAULT_COLAB, record_video=DEFAULT_RECORD_VIDEO, local=True, segment_path = DEFAULT_SEGMENT_PATH, num_segments = DEFAULT_NUM_SEGMENTS,
-        random_init = DEFAULT_RANDOM_INIT, biased_random=DEFAULT_BIASED_RANDOM, bias_threshold=DEFAULT_BIASED_RANDOM_THRESHOLD):
+        random_init = DEFAULT_RANDOM_INIT, biased_random=DEFAULT_BIASED_RANDOM, bias_threshold=DEFAULT_BIASED_RANDOM_THRESHOLD, gamma = DEFAULT_GAMMA):
     
     '''
     action_space: one of 'rpm', 'pid', 'vel', 'one_d_rpm', 'one_d_pid'
@@ -118,6 +119,7 @@ def run(multiagent=DEFAULT_MA, action_space = DEFAULT_ACTION_STRING, train_steps
     model = SafetySAC('MlpPolicy',
                 train_env,
                 tensorboard_log=f"runs/{wandb_run.id}",
+                gamma = gamma,
                 verbose=1)
 
     #### Callbacks for evaluation and wandb ##################
@@ -245,6 +247,7 @@ if __name__ == '__main__':
     parser.add_argument('--random_init', default=DEFAULT_RANDOM_INIT, type=str2bool,           help='whether to call warmup() and randomize starting positions for policy training', metavar='')
     parser.add_argument('--biased_random', default=DEFAULT_BIASED_RANDOM, type=str2bool,           help='when calling warmup(), whether to initialize uniformly across full space, or to use biased random sampling', metavar='')
     parser.add_argument('--bias_threshold', default=DEFAULT_BIASED_RANDOM_THRESHOLD, type=float,           help='threshold for biased random flag', metavar='')
+    parser.add_argument('--gamma', default='DEFAULT_GAMMA', type=float,           help='Default discount factor', metavar='')
     ARGS = parser.parse_args()
 
     run(**vars(ARGS))

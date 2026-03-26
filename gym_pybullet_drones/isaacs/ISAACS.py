@@ -360,5 +360,141 @@ class ISAACS(SAC):
     
     ########## TRAINING #####################################
 
-    def train(self, gradient_steps: int):
-        pass
+    def train(self, gradient_steps: int, batch_size: int = 256):
+        '''
+        ISAACS training loop, which carries out the following per gradient step:
+        1) Critic update using the safety bellman backup
+        2) target critic Polyak update
+        3) Disturbance actor update
+        4) Every actor_update_interval, update the leaderboard and actor 
+
+        Training loop follows the SB3 SAC training loop, with modficitations based on the ISAACS paper
+        '''
+
+        self.policy.set_training_mode(True)
+
+        optimizers = [self.actor.optimizer, self.critic.optimizer, self.disturbance_actor.optimizer]
+
+        if self.ent_coef_optimizer is not None:
+            optimizers += [self.ent_coef_optimizer]
+
+        #Update learning rate according to lr schedule
+        self._update_learning_rate(optimizers)
+
+        ent_coef_losses, ent_coefs = [], []
+        actor_losses, disturbance_losses, critic_losses = [], [], []
+
+        for gradient_step in range(gradient_steps):
+            # Sample a batch from ISAACSReplayBuffer
+            replay_data = self.replay_buffer.sample(batch_size, env=self._vec_normalize_env)  # type: ignore[union-attr]
+            
+            #update ent-coefficient following SB3 methods
+
+            if self.ent_coef_optimizer is not None:
+                with th.no_grad():
+                    _, log_prob = self.actor.action_log_prob(replay_data.observations)
+                ent_coef = th.exp(self.log_ent_coef.detach())
+                ent_coef_loss = -(self.log_ent_coef * (log_prob + self.target_entropy).detach()).mean()
+                self.ent_coef_optimizer.zero_grad()
+                ent_coef_loss.backward()
+                self.ent_coef_optimizer.step()
+                ent_coef_losses.append(ent_coef_loss.item())
+            else:
+                ent_coef = self.ent_coef_tensor
+            ent_coefs.append(ent_coef.item())
+
+            ############## Compute Bellman Backup ##################
+
+            #Following SafetySAC implementation from Safe Robotics Labs' SafetyStableBaselines Repo!
+            with th.no_grad():
+                next_actions, next_log_prob = self.actor.action_log_prob(replay_data.next_observations)
+                next_disturbances, _ = self.disturbance_actor.action_log_prob(replay_data.next_observations)
+
+                #ISAACS version includes next_disturbances according to changs to ISAACSContinuousCritic
+                next_q_values = th.cat(
+                    self.critic_target(replay_data.next_observations, next_actions, next_disturbances),
+                    dim=1,
+                )
+                # Conservative estimate across Q-networks
+                next_q_values, _ = th.min(next_q_values, dim=1, keepdim=True)
+
+                # Entropy term (soft safety value, following SafetySAC / ISAACS paper)
+                next_q_values = next_q_values - ent_coef * next_log_prob.reshape(-1, 1)
+
+                # g' = safety margin at next state (stored as reward in buffer)
+                g_prime = replay_data.rewards
+                not_done = 1.0 - replay_data.dones
+                v_to_go = th.minimum(g_prime, next_q_values) 
+
+                target_q_values = (1.0 - self.gamma * not_done) * g_prime + self.gamma * not_done * v_to_go
+
+                
+
+            #################### Critic Update ######################
+            current_q_values = self.critic(replay_data.observations, replay_data.actions, replay_data.disturbances)
+
+            critic_loss = .5 * sum(F.mse_loss(current_q, target_q_values) for current_q in current_q_values)
+            assert isinstance(critic_loss, th.Tensor)
+            critic_losses.append(critic_loss.item())
+
+            #update critic optimizer
+            self.critic.optimizer.zero_grad()
+            critic_loss.backward()
+            self.critic.optimizer.step()
+            
+
+            # Polyak update of target critic (follows SafetySAC)
+            polyak_update(self.critic.parameters(), self.critic_target.parameters(), self.tau)
+            polyak_update(self.batch_norm_stats, self.batch_norm_stats_target, 1.0)
+
+
+            ############## Disturbance Update ########################
+            # Minimizing this drives Q down (adversarial) + entropy bonus
+            #Sample a fresh disturbance from current adversary policy!
+            d_pi, d_log_prob = self.disturbance_actor.action_log_prob(replay_data.observations) 
+            q_values_d = th.cat(
+                self.critic(replay_data.observations, replay_data.actions, d_pi),
+                dim=1,
+            )
+            min_q_d, _ = th.min(q_values_d, dim=1, keepdim=True)
+
+            disturbance_loss = (min_q_d + self.disturbance_ent_coef * d_log_prob).mean()
+            disturbance_losses.append(disturbance_loss.item())
+
+            #update disturbance optimizer
+            self.disturbance_actor.optimizer.zero_grad()
+            disturbance_loss.backward()
+            self.disturbance_actor.optimizer.step()
+            
+
+            ############## Actor update ##############################
+            # Minimizing this maximizes Q (safety) + entropy bonus
+            if gradient_step % self.actor_update_interval == 0: #default runs every step!
+                # Update leaderboard: add current policies, run tournament, recompute P_{Π^d}.
+                # STUB: no-op until the full leaderboard is implemented.
+                self.leaderboard.update(self.actor, self.disturbance_actor)
+
+                #sample again (this happens earlier in safety_sac, placed here for readability)
+                u_pi, u_log_prob = self.actor.action_log_prob(replay_data.observations)
+                q_values_u = th.cat(self.critic(replay_data.observations, u_pi, replay_data.disturbances),dim=1)
+                min_q_u, _ = th.min(q_values_u, dim=1, keepdim=True)
+
+                actor_loss = (ent_coef*u_log_prob - min_q_u).mean()
+                actor_losses.append(actor_loss.item())
+
+                #update actor optimizer
+                self.actor.optimizer.zero_grad()
+                actor_loss.backward()
+                self.actor.optimizer.step()
+
+        self._n_updates += gradient_steps
+
+        self.logger.record("train/n_updates", self._n_updates, exclude="tensorboard")
+        self.logger.record("train/ent_coef", np.mean(ent_coefs))
+        self.logger.record("train/critic_loss", np.mean(critic_losses))
+        self.logger.record("train/disturbance_loss", np.mean(disturbance_losses))
+        if actor_losses:
+            self.logger.record("train/actor_loss", np.mean(actor_losses))
+        if ent_coef_losses:
+            self.logger.record("train/ent_coef_loss", np.mean(ent_coef_losses))
+           
