@@ -1,10 +1,12 @@
-"""Main Training Script for models using Safety SAC
+'''
+Main Training Script for models using ISAACS (Iterative Soft Adversarial Actor-Critic for Safety)
 
-Class SafeHoverAviary is used as learning env for the SAC SB3 algorithm.
+Uses SafeHoverAviary as the learning environment, and uses the ISAACS.py and isaacs_utils.py implementation
+for the algorithm. ISAACS extends SAC with an adversarial 'disturbance' network trained alongside actor policy.
 
-Adapted from the standard 'learn.py' training script from gym_pybullet_drones
+Adapted from the standard 'learn.py' gym_pybullet_drones example
+'''
 
-"""
 import os
 import time
 from datetime import datetime
@@ -12,10 +14,9 @@ import argparse
 import gymnasium as gym
 import numpy as np
 import torch
+from gymnasium import spaces
 
-
-from stable_baselines3 import SAC
-from gym_pybullet_drones.isaacs.safety_sac import SafetySAC
+from gym_pybullet_drones.isaacs.ISAACS import ISAACS
 from stable_baselines3.common.env_util import make_vec_env
 from stable_baselines3.common.callbacks import EvalCallback, StopTrainingOnRewardThreshold
 from stable_baselines3.common.evaluation import evaluate_policy
@@ -29,8 +30,6 @@ from gym_pybullet_drones.envs.HoverAviary import HoverAviary
 from gym_pybullet_drones.envs.MultiHoverAviary import MultiHoverAviary
 from gym_pybullet_drones.utils.utils import sync, str2bool
 from gym_pybullet_drones.utils.enums import ObservationType, ActionType
-
-
 
 class ObsSqueezeWrapper(gym.Wrapper):
     def reset(self, **kwargs):
@@ -49,10 +48,16 @@ DEFAULT_COLAB = False
 DEFAULT_OBS = ObservationType('kin') # 'kin' or 'rgb'
 DEFAULT_ACTION_STRING = 'rpm'
 DEFAULT_ACT = ActionType('rpm') # 'rpm' or 'pid' or 'vel' or 'one_d_rpm' or 'one_d_pid'
-DEFAULT_AGENTS = 2
+DEFAULT_AGENTS = 1
 DEFAULT_MA = False
 DEFAULT_STEPS = 1000000
 DEFAULT_GAMMA = .99
+DEFAULT_EVAL_FREQ = 1000
+
+#Disturbance specific defailts for ISAACS
+DEFAULT_DISTURBANCE_ENT_COEF = 1.0
+DEFAULT_ACTOR_UPDATE_INTERVAL = 1
+DEFAULT_DISTURBANCE_BOUND = .2
 
 # Default arguments for random initializing behavior defined in SafeHoverAviary
 DEFAULT_SEGMENT_PATH = True
@@ -75,17 +80,23 @@ def run(multiagent=DEFAULT_MA,
         random_init = DEFAULT_RANDOM_INIT, 
         biased_random=DEFAULT_BIASED_RANDOM, 
         bias_threshold=DEFAULT_BIASED_RANDOM_THRESHOLD, 
-        gamma = DEFAULT_GAMMA
-    ):
-    
+        gamma = DEFAULT_GAMMA,
+        disturbance_ent_coef = DEFAULT_DISTURBANCE_ENT_COEF,
+        actor_update_interval = DEFAULT_ACTOR_UPDATE_INTERVAL,
+        disturbance_bound = DEFAULT_DISTURBANCE_BOUND,
+        eval_freq = DEFAULT_EVAL_FREQ,
+):
     '''
     action_space: one of 'rpm', 'pid', 'vel', 'one_d_rpm', 'one_d_pid'
     train_steps: amount of timesteps to train the model
     random_init: whether to randomly initialize across the space at the start of each episode
     biased_random: whether to initialize using the "biased" initialization scheme (see SafeHoverAviary)
     bias_threshold: the percent chance of randomly initializing instead of drawing from bias intervals when biased_random is enabled
+    gamma: discount factor for training
+    disturbance_ent_coef: entropy coefficient for the disturbance actor to effect exploration
+    actor_update_interval: how many gradient steps to wait before updating actor (by default, 1 = every step)
     '''
-    
+
     # Establish timestamped save directory for model logging, so that subsequent runs do not overwrite
     filename = os.path.join(output_folder, 'save-'+datetime.now().strftime("%m.%d.%Y_%H.%M.%S"))
     if not os.path.exists(filename):
@@ -105,22 +116,30 @@ def run(multiagent=DEFAULT_MA,
                                  )
     
     #Eval env using biased random, but has used uniform random in the past. This should better preserve the "best" model for filtering purposes
-    eval_env = SafeHoverAviary(obs=DEFAULT_OBS, act=act_space, random_init = random_init) 
-    
-    
+    eval_env = SafeHoverAviary(obs=DEFAULT_OBS, act=act_space, random_init = random_init, biased_random=biased_random, bias_threshold=bias_threshold) 
     
     #### Check the environment's spaces ########################
     print('[INFO] Action space:', train_env.action_space)
     print('[INFO] Observation space:', train_env.observation_space)
 
-    #### Train the model #######################################
+    #Define ISAACS disturbance space (defaults to being an additive noise model)
+    disturbance_space = spaces.Box(
+        low=np.array([-disturbance_bound]*4, dtype=np.float32),
+        high=np.array([disturbance_bound]*4, dtype=np.float32),
+    )
+
+    #### Create the model #######################################
     config = {
         "policy_type": "MlpPolicy", 
         "total_timesteps": 10000000,
-        "env_name": "SafeHoverAviary"
+        "env_name": "SafeHoverAviary", 
+        "algorithm": "ISAACS",
+        "gamma": gamma,
+        "disturbance_ent_coef": disturbance_ent_coef,
+        "actor_update_interval": actor_update_interval,
     }
 
-    # Log run to WandB
+     # Log run to WandB
     wandb_run = wandb.init(
         project="SafeDroneFlight",
         config = config,
@@ -129,11 +148,17 @@ def run(multiagent=DEFAULT_MA,
         save_code=False,
     )
 
-    model = SafetySAC('MlpPolicy',
-                train_env,
-                tensorboard_log=f"runs/{wandb_run.id}",
-                gamma = gamma,
-                verbose=1)
+    #Create ISAACS policy model
+    model = ISAACS(
+        'MlpPolicy',
+        train_env,
+        tensorboard_log=f"runs/{wandb_run.id}",
+        gamma=gamma,
+        disturbance_space=disturbance_space,
+        disturbance_ent_coef=disturbance_ent_coef,
+        actor_update_interval=actor_update_interval,
+        verbose=1,
+    )
 
     #### Callbacks for evaluation and wandb ##################
     target_reward = 400.0
@@ -144,7 +169,7 @@ def run(multiagent=DEFAULT_MA,
                                  verbose=1,
                                  best_model_save_path=filename+'/',
                                  log_path=filename+'/',
-                                 eval_freq=int(1000),
+                                 eval_freq=int(eval_freq),
                                  deterministic=True,
                                  render=False)
     wandb_callback = WandbCallback(
@@ -154,15 +179,14 @@ def run(multiagent=DEFAULT_MA,
     )
 
 
+    #### Train the model #######################################
     model.learn(total_timesteps=train_steps if local else int(1e2), # shorter training in GitHub Actions pytest
                 callback=[eval_callback, wandb_callback],
                 log_interval=100)
-
-    #### Save the model ########################################
+    
     model.save(filename+'/final_model.zip')
     print(filename)
 
-    #### Print training progression ############################
     with np.load(filename+'/evaluations.npz') as data:
         for j in range(data['timesteps'].shape[0]):
             print(str(data['timesteps'][j])+","+str(data['results'][j][0]))
@@ -177,64 +201,48 @@ def run(multiagent=DEFAULT_MA,
         path = filename+'/best_model.zip'
     else:
         print("[ERROR]: no model under the specified path", filename)
-    model = SafetySAC.load(path)
+    model = ISAACS.load(path)
 
-    #### Show (and record a video of) the model's performance ##
-
-    test_env = SafeHoverAviary(gui=gui,
-                               obs=DEFAULT_OBS,
-                               act=act_space,
-                               record=record_video)
+    test_env = SafeHoverAviary(gui=gui, obs=DEFAULT_OBS, act=act_space, record=record_video)
     test_env_nogui = SafeHoverAviary(obs=DEFAULT_OBS, act=act_space)
-    
-    logger = Logger(logging_freq_hz=int(test_env.CTRL_FREQ),
-                num_drones=DEFAULT_AGENTS if multiagent else 1,
-                output_folder=output_folder,
-                colab=colab
-                )
-    
+
+    logger = Logger(
+        logging_freq_hz=int(test_env.CTRL_FREQ),
+        num_drones=DEFAULT_AGENTS if multiagent else 1,
+        output_folder=output_folder,
+        colab=colab,
+    )
+
     test_env_nogui = ObsSqueezeWrapper(test_env_nogui)
 
-    mean_reward, std_reward = evaluate_policy(model,
-                                              test_env_nogui,
-                                              n_eval_episodes=10
-                                              )
-    print("\n\n\nMean reward ", mean_reward, " +- ", std_reward, "\n\n")
+    mean_reward, std_reward = evaluate_policy(model, test_env_nogui, n_eval_episodes=10)
+    print("\n\n\nMean reward", mean_reward, "+-", std_reward, "\n\n")
 
     obs, info = test_env.reset(seed=42, options={})
     start = time.time()
 
-    # Control loop using trained fallback policy
-    for i in range((test_env.EPISODE_LEN_SEC+2)*test_env.CTRL_FREQ):
-        action, _states = model.predict(obs,
-                                        deterministic=True
-                                        )
+    for i in range((test_env.EPISODE_LEN_SEC + 2) * test_env.CTRL_FREQ):
+        action, _states = model.predict(obs, deterministic=True)
         obs, reward, terminated, truncated, info = test_env.step(action)
         obs2 = obs.squeeze()
         act2 = action.squeeze()
         print("Obs:", obs, "\tAction", action, "\tReward:", reward, "\tTerminated:", terminated, "\tTruncated:", truncated)
         if DEFAULT_OBS == ObservationType.KIN:
             if not multiagent:
-                logger.log(drone=0,
-                    timestamp=i/test_env.CTRL_FREQ,
-                    state=np.hstack([obs2[0:3],
-                                        np.zeros(4),
-                                        obs2[3:15],
-                                        act2
-                                        ]),
-                    control=np.zeros(12)
-                    )
+                logger.log(
+                    drone=0,
+                    timestamp=i / test_env.CTRL_FREQ,
+                    state=np.hstack([obs2[0:3], np.zeros(4), obs2[3:15], act2]),
+                    control=np.zeros(12),
+                )
             else:
                 for d in range(DEFAULT_AGENTS):
-                    logger.log(drone=d,
-                        timestamp=i/test_env.CTRL_FREQ,
-                        state=np.hstack([obs2[d][0:3],
-                                            np.zeros(4),
-                                            obs2[d][3:15],
-                                            act2[d]
-                                            ]),
-                        control=np.zeros(12)
-                        )
+                    logger.log(
+                        drone=d,
+                        timestamp=i / test_env.CTRL_FREQ,
+                        state=np.hstack([obs2[d][0:3], np.zeros(4), obs2[d][3:15], act2[d]]),
+                        control=np.zeros(12),
+                    )
         test_env.render()
         print(terminated)
         sync(i, start, test_env.CTRL_TIMESTEP)
@@ -245,22 +253,31 @@ def run(multiagent=DEFAULT_MA,
     if plot and DEFAULT_OBS == ObservationType.KIN:
         logger.plot()
 
+
 if __name__ == '__main__':
-    #### Define and parse (optional) arguments for the script ##
-    parser = argparse.ArgumentParser(description='Single agent reinforcement learning example script')
-    parser.add_argument('--multiagent',         default=DEFAULT_MA,            type=str2bool,      help='Whether to use example LeaderFollower instead of Hover (default: False)', metavar='')
-    parser.add_argument('--gui',                default=DEFAULT_GUI,           type=str2bool,      help='Whether to use PyBullet GUI (default: True)', metavar='')
-    parser.add_argument('--record_video',       default=DEFAULT_RECORD_VIDEO,  type=str2bool,      help='Whether to record a video (default: False)', metavar='')
-    parser.add_argument('--output_folder',      default=DEFAULT_OUTPUT_FOLDER, type=str,           help='Folder where to save logs (default: "results")', metavar='')
-    parser.add_argument('--colab',              default=DEFAULT_COLAB,         type=bool,          help='Whether example is being run by a notebook (default: "False")', metavar='')
-    parser.add_argument('--action_space', default=DEFAULT_ACTION_STRING, type=str, help='string corresponding to the action space used for training', metavar='')
-    parser.add_argument('--train_steps', default=DEFAULT_STEPS, type=int, help='Amount of timesteps to train if target isnt reached', metavar='')
-    parser.add_argument('--segment_path', default=DEFAULT_SEGMENT_PATH, type=str2bool,           help='Whether we segment the path to a random target (needed for bigger boxes)', metavar='')
-    parser.add_argument('--num_segments', default=DEFAULT_NUM_SEGMENTS, type=int,           help='How many segments to make', metavar='')
-    parser.add_argument('--random_init', default=DEFAULT_RANDOM_INIT, type=str2bool,           help='whether to call warmup() and randomize starting positions for policy training', metavar='')
-    parser.add_argument('--biased_random', default=DEFAULT_BIASED_RANDOM, type=str2bool,           help='when calling warmup(), whether to initialize uniformly across full space, or to use biased random sampling', metavar='')
-    parser.add_argument('--bias_threshold', default=DEFAULT_BIASED_RANDOM_THRESHOLD, type=float,           help='threshold for biased random flag', metavar='')
-    parser.add_argument('--gamma', default='DEFAULT_GAMMA', type=float,           help='Default discount factor', metavar='')
+    parser = argparse.ArgumentParser(description='ISAACS training script for SafeHoverAviary')
+    parser.add_argument('--multiagent',         default=DEFAULT_MA,                     type=str2bool,  help='Whether to use multiagent mode (default: False)', metavar='')
+    parser.add_argument('--gui',                default=DEFAULT_GUI,                    type=str2bool,  help='Whether to use PyBullet GUI (default: True)', metavar='')
+    parser.add_argument('--record_video',       default=DEFAULT_RECORD_VIDEO,           type=str2bool,  help='Whether to record a video (default: False)', metavar='')
+    parser.add_argument('--output_folder',      default=DEFAULT_OUTPUT_FOLDER,          type=str,       help='Folder where to save logs (default: "results")', metavar='')
+    parser.add_argument('--colab',              default=DEFAULT_COLAB,                  type=bool,      help='Whether example is being run by a notebook (default: False)', metavar='')
+    parser.add_argument('--action_space',       default=DEFAULT_ACTION_STRING,          type=str,       help='Action space string: rpm, pid, vel, one_d_rpm, one_d_pid', metavar='')
+    parser.add_argument('--train_steps',        default=DEFAULT_STEPS,                  type=int,       help='Amount of timesteps to train', metavar='')
+    parser.add_argument('--segment_path',       default=DEFAULT_SEGMENT_PATH,           type=str2bool,  help='Whether to segment the path to a random target', metavar='')
+    parser.add_argument('--num_segments',       default=DEFAULT_NUM_SEGMENTS,           type=int,       help='How many path segments to use', metavar='')
+    parser.add_argument('--random_init',        default=DEFAULT_RANDOM_INIT,            type=str2bool,  help='Whether to randomize starting positions each episode', metavar='')
+    parser.add_argument('--biased_random',      default=DEFAULT_BIASED_RANDOM,          type=str2bool,  help='Whether to use biased random sampling during warmup', metavar='')
+    parser.add_argument('--bias_threshold',     default=DEFAULT_BIASED_RANDOM_THRESHOLD, type=float,   help='Threshold for biased random flag', metavar='')
+    parser.add_argument('--gamma',              default=DEFAULT_GAMMA,                  type=float,     help='Discount factor', metavar='')
+    parser.add_argument('--disturbance_ent_coef', default=DEFAULT_DISTURBANCE_ENT_COEF, type=float,    help='Entropy coefficient for the disturbance actor', metavar='')
+    parser.add_argument('--actor_update_interval', default=DEFAULT_ACTOR_UPDATE_INTERVAL, type=int,    help='Gradient steps between control actor updates', metavar='')
+    parser.add_argument('--disturbance_bound', default=DEFAULT_DISTURBANCE_BOUND, type=float,    help='bounds for the disturbance space', metavar='')
+    parser.add_argument('--eval_freq', default=DEFAULT_EVAL_FREQ, type=int,    help='how often to run eval', metavar='')
     ARGS = parser.parse_args()
 
     run(**vars(ARGS))
+
+
+
+
+
