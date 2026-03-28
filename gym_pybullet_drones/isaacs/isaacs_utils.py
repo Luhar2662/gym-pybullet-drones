@@ -10,6 +10,7 @@ Contains:
 - ISAACSPolicy: Extends SB3's SACPolicy to maintain disturbance actor network during training
 """
 
+import copy
 from typing import TYPE_CHECKING, Any, Callable, NamedTuple, Optional, Protocol, SupportsFloat, Union, Tuple, Type, List
 
 import torch as th
@@ -445,23 +446,177 @@ class ISAACSLeaderboard:
     Replace sample_disturbance_policy() and update() to enable the full scheme.
     """
 
-    def __init__(self, disturbance_actor: DisturbanceActor):
-        self._disturbance_actor = disturbance_actor
+    def __init__(
+            self, 
+            disturbance_actor: DisturbanceActor,
+            eval_env=None,
+            k_u: int = 5,
+            k_d: int = 5,
+            n_eps: int = 5,
+        ):
+        '''
+        Parameters:
+        disturbance_actor: the current disturbance actor being trained, in the event that the leaderboard is not yet filled
+        eval_env: the environment used for testing rounds
+        k_u: amount of actor networks being stored
+        k_d: amount of disturbance networks being stored
+        n_eps: number of episodes per round (between each u, d pairing)
+        '''
+        self.current_disturbance = disturbance_actor
+        self.eval_env = eval_env
+        self.k_u, self.k_d = k_u, k_d
+        self.n_eps = n_eps
+        
+        #create leaderboards to hold actor and disturbance policies, as well as win rate dict and sampling distributions
+        self.actor_policies = []
+        self.dist_policies = []
+
+        self.win_rates = {} #key: (d_index, u_index) --> value: safety violation rate (win rate of disturbance / error)
+        self.sample_dist = np.array([])
+
 
     def sample_disturbance_policy(self) -> DisturbanceActor:
         """
         Sample one disturbance policy for a new episode from P_{Π^d}.
         Called once per episode (or per env reset) in collect_rollouts.
-
-        STUB: always returns the current disturbance actor.
-        TODO: sample from softmax(win_rates) over the leaderboard pool Π^d.
+        
         """
-        return self._disturbance_actor
+        if len(self.dist_policies) == 0:
+            return self.current_disturbance
+
+        idx = int(np.random.choice(len(self.dist_policies)), p = self.sample_dist)
+        return self.dist_policies[idx]
 
     def update(self, pi_u: Actor, pi_d: DisturbanceActor) -> None:
         """
-
-        STUB: no-op.
-        TODO: fix
+        Collect the current actor and disturbance policies, run the tournament, and update leaderboard and samplic dist.
+        Do nothing if eval_env is not valid or provided!
         """
-        pass
+        
+        if self.eval_env is None:
+            return
+
+        u_current = copy.deepcopy(pi_u)
+        u_current.set_training_mode(False)
+        d_current = copy.deepcopy(pi_d)
+        d_current.set_training_mode(False)
+
+        new_d_idx, new_u_idx = len(self.dist_policies), len(self.actor_policies)
+
+        num_actors, num_disturbances = len(self.actor_policies), len(self.dist_policies)
+
+        #test new disturbance against existing controllers
+        for actor_idx, actor in enumerate(self.actor_policies):
+            win_rate = self.run_evaluation(actor, d_current)
+            self.win_rates[(new_d_idx, actor_idx)] = win_rate
+
+        #test new controller against existing disturbances
+        for dist_idx, disturbance in enumerate(self.dist_policies):
+            win_rate = self.run_evaluation(u_current, disturbance)
+            self.win_rates[(dist_idx, new_u_idx)] = win_rate
+
+        #test new pair
+        win_rate = self.run_evaluation(u_current, d_current)
+        self.win_rates[(new_d_idx, new_u_idx)] = win_rate
+
+        #update actor and disturbance leaderboards
+        self.actor_policies.append(u_current)
+        self.dist_policies.append(d_current)
+
+        if len(self.actor_policies) > self.k_u: #collate the average win rates against each actor, and remove the one with the highest
+            average_win_rates = []
+            for u in range(len(self.actor_policies)):
+                rates = [self.win_rates.get((d, u), 0.0) for d in range(self.dist_policies)]
+                average_win_rates.append(np.mean(rates) if rates else 0.0)
+            #now, remove the actor with the highest disturbance win rate
+            self.remove_actor(int(np.argmax(average_win_rates)))
+        
+        if len(self.dist_policies) > self.k_d: #same idea with disturbances as above, obviously removing the minimum instead
+            m = self.compute_win_rates()
+            self.remove_dist(int(np.argmin(m)))
+            
+        #determine sampling distribution for disturbances
+        m = self.compute_win_rates() #calculate m again in case a disturbance was dropped above
+        exponential = np.exp(m - np.max(m)) #implement softmax
+        self.sample_dist = exponential / exponential.sum()
+
+
+
+
+    def run_evaluation(self, pi_u, pi_d) -> float:
+        '''
+        Run episodes between the given actor and disturbance networks, and return the fraction of episodes in which
+        a safety violation occurs
+        '''
+
+        env = self.eval_env
+        device = next(pi_u.parameters()).device
+
+        num_violations = 0
+
+        for _ in range(self.n_eps):
+            obs, _ = env.reset()
+            done = False
+            truncated = False
+            violation = False
+
+            while not (done or truncated):
+                obs_t = th.FloatTensor(obs).unsqueeze(0).to(device)
+                with th.no_grad():
+                    action = pi_u.predict(obs_t, deterministic = True).cpu().numpy().squeeze(0)
+                    disturbance = pi_d.predict(obs_t, deterministic = True).cpu().numpy().squeeze(0)
+                #by default, model disturbance as additive
+                disturbed = np.clip(action + disturbance, env.action_space.low, env.action_space.high)
+
+                obs, margin, done, truncated, _ = env.step(disturbed)
+                
+                if margin < 0:
+                    violation = True
+                    break
+            #rollout finished
+            if violation:
+                num_violations += 1
+        return float(num_violations) / float(self.n_eps)
+    
+    def compute_win_rates(self) -> np.ndarray:
+        '''
+        Determine the total winrates of each disturbance across all controllers
+        '''
+        m = []
+        for dist in range(len(self.dist_policies)):
+            rates = [self.win_rate_matrix.get((dist, act), 0.0) for act in range(len(self.actor_policies))]
+            m.append(float(np.mean(rates))) 
+        return np.array(m, dtype = np.float64)
+
+    def remove_actor(self, idx) -> None:
+        '''
+        Removes the actor at the given index, and reshuffles win_rates accordingly
+        '''
+        self.actor_policies.pop(idx)
+        new_win_rates = {}
+        for (d, u), wr in self.win_rates.items():
+            if u == idx:
+                continue
+            new_u = u if u < idx else u - 1 #shift all subsequent actors one step down
+            new_win_rates[(d, new_u)] = wr #place new pair in win rates
+        
+        self.win_rates = new_win_rates
+    
+    def remove_dist(self, idx) -> None:
+        '''
+        Removes the disturbance at the given index, and reshuffles win_rates accordingly
+        '''
+        self.dist_policies.pop(idx)
+        new_win_rates = {}
+        for (d, u), wr in self.win_rates.items():
+            if d == idx:
+                continue
+            new_d = d if d < idx else d - 1 #shift all subsequent disturbances one step down
+            new_win_rates[(d, new_d)] = wr #place new pair in win rates
+        
+        self.win_rates = new_win_rates
+                
+
+
+
+

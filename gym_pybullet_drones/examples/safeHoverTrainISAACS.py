@@ -52,7 +52,7 @@ DEFAULT_AGENTS = 1
 DEFAULT_MA = False
 DEFAULT_STEPS = 1000000
 DEFAULT_GAMMA = .99
-DEFAULT_EVAL_FREQ = 1000
+DEFAULT_EVAL_FREQ = 5000
 
 #Disturbance specific defailts for ISAACS
 DEFAULT_DISTURBANCE_ENT_COEF = 1.0
@@ -130,7 +130,8 @@ def run(multiagent=DEFAULT_MA,
                                  )
 
     #Eval env using biased random, but has used uniform random in the past. This should better preserve the "best" model for filtering purposes
-    eval_env = SafeHoverAviary(obs=DEFAULT_OBS, act=act_space, random_init=random_init, biased_random=biased_random, bias_threshold=bias_threshold)
+    eval_env = SafeHoverAviary(obs=DEFAULT_OBS, act=act_space, random_init=random_init, biased_random=biased_random, bias_threshold=bias_threshold, random_vel=random_vel, vel_range=vel_range, ang_vel_range=ang_vel_range,
+                                                 hover_threshold=hover_threshold, hover_steps=hover_steps, episode_len_sec=episode_len_sec)
     
     #### Check the environment's spaces ########################
     print('[INFO] Action space:', train_env.action_space)

@@ -51,7 +51,7 @@ class SafeHoverAviary(BaseRLAviary):
                  ang_vel_range = 1.0,
                  hover_threshold = 0.8,
                  hover_steps = 30,
-                 episode_len_sec = 8,
+                 episode_len_sec = 6,
                  ):
         """Initialization of a single agent RL environment.
 
@@ -206,9 +206,10 @@ class SafeHoverAviary(BaseRLAviary):
         Returns
         -------
         bool
-            Whether the current episode timed out.
+            Whether the current episode timed out OR if the drone has been hovering for a second
 
         """
+        #Hover check -- truncates if the drone has been hovering to make training more efficient
         state = self._getDroneStateVector(0)
         ground_margin = state[2]
         left_margin = 1 - state[1]
