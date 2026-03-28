@@ -60,22 +60,34 @@ DEFAULT_NUM_SEGMENTS = 1
 DEFAULT_RANDOM_INIT = False
 DEFAULT_BIASED_RANDOM = True
 DEFAULT_BIASED_RANDOM_THRESHOLD = .5
+DEFAULT_RANDOM_VEL = False
+DEFAULT_VEL_RANGE = 1.0
+DEFAULT_ANG_VEL_RANGE = 1.0
+DEFAULT_HOVER_THRESHOLD = .8
+DEFAULT_HOVER_STEPS = 30
+DEFAULT_EPISODE_LEN_SEC = 6
 
-def run(multiagent=DEFAULT_MA, 
-        action_space = DEFAULT_ACTION_STRING, 
-        train_steps=DEFAULT_STEPS, 
-        output_folder=DEFAULT_OUTPUT_FOLDER, 
-        gui=DEFAULT_GUI, 
-        plot=True, 
-        colab=DEFAULT_COLAB, 
-        record_video=DEFAULT_RECORD_VIDEO, 
-        local=True, 
-        segment_path = DEFAULT_SEGMENT_PATH, 
+def run(multiagent=DEFAULT_MA,
+        action_space = DEFAULT_ACTION_STRING,
+        train_steps=DEFAULT_STEPS,
+        output_folder=DEFAULT_OUTPUT_FOLDER,
+        gui=DEFAULT_GUI,
+        plot=True,
+        colab=DEFAULT_COLAB,
+        record_video=DEFAULT_RECORD_VIDEO,
+        local=True,
+        segment_path = DEFAULT_SEGMENT_PATH,
         num_segments = DEFAULT_NUM_SEGMENTS,
-        random_init = DEFAULT_RANDOM_INIT, 
-        biased_random=DEFAULT_BIASED_RANDOM, 
-        bias_threshold=DEFAULT_BIASED_RANDOM_THRESHOLD, 
-        gamma = DEFAULT_GAMMA
+        random_init = DEFAULT_RANDOM_INIT,
+        biased_random=DEFAULT_BIASED_RANDOM,
+        bias_threshold=DEFAULT_BIASED_RANDOM_THRESHOLD,
+        gamma = DEFAULT_GAMMA,
+        random_vel = DEFAULT_RANDOM_VEL,
+        vel_range = DEFAULT_VEL_RANGE,
+        ang_vel_range = DEFAULT_ANG_VEL_RANGE,
+        hover_threshold = DEFAULT_HOVER_THRESHOLD,
+        hover_steps = DEFAULT_HOVER_STEPS,
+        episode_len_sec = DEFAULT_EPISODE_LEN_SEC,
     ):
     
     '''
@@ -99,13 +111,15 @@ def run(multiagent=DEFAULT_MA,
 
     
     train_env = make_vec_env(SafeHoverAviary,
-                                 env_kwargs=dict(obs=DEFAULT_OBS, act=act_space, random_init=random_init, biased_random=biased_random, bias_threshold=bias_threshold),
+                                 env_kwargs=dict(obs=DEFAULT_OBS, act=act_space, random_init=random_init, biased_random=biased_random, bias_threshold=bias_threshold,
+                                                 random_vel=random_vel, vel_range=vel_range, ang_vel_range=ang_vel_range,
+                                                 hover_threshold=hover_threshold, hover_steps=hover_steps, episode_len_sec=episode_len_sec),
                                  n_envs=4, # Parallel Environments as supported by PyBullet for more efficient training
                                  seed=0
                                  )
-    
+
     #Eval env using biased random, but has used uniform random in the past. This should better preserve the "best" model for filtering purposes
-    eval_env = SafeHoverAviary(obs=DEFAULT_OBS, act=act_space, random_init = random_init) 
+    eval_env = SafeHoverAviary(obs=DEFAULT_OBS, act=act_space, random_init=random_init, biased_random=biased_random, bias_threshold=bias_threshold)
     
     
     
@@ -131,6 +145,7 @@ def run(multiagent=DEFAULT_MA,
 
     model = SafetySAC('MlpPolicy',
                 train_env,
+                gradient_steps=-1,
                 tensorboard_log=f"runs/{wandb_run.id}",
                 gamma = gamma,
                 verbose=1)
@@ -260,7 +275,13 @@ if __name__ == '__main__':
     parser.add_argument('--random_init', default=DEFAULT_RANDOM_INIT, type=str2bool,           help='whether to call warmup() and randomize starting positions for policy training', metavar='')
     parser.add_argument('--biased_random', default=DEFAULT_BIASED_RANDOM, type=str2bool,           help='when calling warmup(), whether to initialize uniformly across full space, or to use biased random sampling', metavar='')
     parser.add_argument('--bias_threshold', default=DEFAULT_BIASED_RANDOM_THRESHOLD, type=float,           help='threshold for biased random flag', metavar='')
-    parser.add_argument('--gamma', default='DEFAULT_GAMMA', type=float,           help='Default discount factor', metavar='')
+    parser.add_argument('--gamma',          default=DEFAULT_GAMMA,          type=float,    help='Default discount factor', metavar='')
+    parser.add_argument('--random_vel',      default=DEFAULT_RANDOM_VEL,  type=str2bool, help='Randomize initial velocity at episode start', metavar='')
+    parser.add_argument('--vel_range',       default=DEFAULT_VEL_RANGE,   type=float,    help='Linear velocity randomization range (m/s)', metavar='')
+    parser.add_argument('--ang_vel_range',   default=DEFAULT_ANG_VEL_RANGE, type=float,  help='Angular velocity randomization range (rad/s)', metavar='')
+    parser.add_argument('--hover_threshold', default=DEFAULT_HOVER_THRESHOLD,  type=float, help='Safety margin above which hover counter increments', metavar='')
+    parser.add_argument('--hover_steps',     default=DEFAULT_HOVER_STEPS,   type=int,   help='Consecutive steps above hover_threshold before truncating', metavar='')
+    parser.add_argument('--episode_len_sec', default=DEFAULT_EPISODE_LEN_SEC,    type=int,   help='Hard episode length cap in seconds', metavar='')
     ARGS = parser.parse_args()
 
     run(**vars(ARGS))

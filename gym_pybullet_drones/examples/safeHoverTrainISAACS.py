@@ -65,26 +65,38 @@ DEFAULT_NUM_SEGMENTS = 1
 DEFAULT_RANDOM_INIT = False
 DEFAULT_BIASED_RANDOM = True
 DEFAULT_BIASED_RANDOM_THRESHOLD = .5
+DEFAULT_RANDOM_VEL = False
+DEFAULT_VEL_RANGE = 1.0
+DEFAULT_ANG_VEL_RANGE = 1.0
+DEFAULT_HOVER_THRESHOLD = .8
+DEFAULT_HOVER_STEPS = 30
+DEFAULT_EPISODE_LEN_SEC = 6
 
-def run(multiagent=DEFAULT_MA, 
-        action_space = DEFAULT_ACTION_STRING, 
-        train_steps=DEFAULT_STEPS, 
-        output_folder=DEFAULT_OUTPUT_FOLDER, 
-        gui=DEFAULT_GUI, 
-        plot=True, 
-        colab=DEFAULT_COLAB, 
-        record_video=DEFAULT_RECORD_VIDEO, 
-        local=True, 
-        segment_path = DEFAULT_SEGMENT_PATH, 
+def run(multiagent=DEFAULT_MA,
+        action_space = DEFAULT_ACTION_STRING,
+        train_steps=DEFAULT_STEPS,
+        output_folder=DEFAULT_OUTPUT_FOLDER,
+        gui=DEFAULT_GUI,
+        plot=True,
+        colab=DEFAULT_COLAB,
+        record_video=DEFAULT_RECORD_VIDEO,
+        local=True,
+        segment_path = DEFAULT_SEGMENT_PATH,
         num_segments = DEFAULT_NUM_SEGMENTS,
-        random_init = DEFAULT_RANDOM_INIT, 
-        biased_random=DEFAULT_BIASED_RANDOM, 
-        bias_threshold=DEFAULT_BIASED_RANDOM_THRESHOLD, 
+        random_init = DEFAULT_RANDOM_INIT,
+        biased_random=DEFAULT_BIASED_RANDOM,
+        bias_threshold=DEFAULT_BIASED_RANDOM_THRESHOLD,
         gamma = DEFAULT_GAMMA,
         disturbance_ent_coef = DEFAULT_DISTURBANCE_ENT_COEF,
         actor_update_interval = DEFAULT_ACTOR_UPDATE_INTERVAL,
         disturbance_bound = DEFAULT_DISTURBANCE_BOUND,
         eval_freq = DEFAULT_EVAL_FREQ,
+        random_vel = DEFAULT_RANDOM_VEL,
+        vel_range = DEFAULT_VEL_RANGE,
+        ang_vel_range = DEFAULT_ANG_VEL_RANGE,
+        hover_threshold = DEFAULT_HOVER_THRESHOLD,
+        hover_steps = DEFAULT_HOVER_STEPS,
+        episode_len_sec = DEFAULT_EPISODE_LEN_SEC,
 ):
     '''
     action_space: one of 'rpm', 'pid', 'vel', 'one_d_rpm', 'one_d_pid'
@@ -110,13 +122,15 @@ def run(multiagent=DEFAULT_MA,
 
     
     train_env = make_vec_env(SafeHoverAviary,
-                                 env_kwargs=dict(obs=DEFAULT_OBS, act=act_space, random_init=random_init, biased_random=biased_random, bias_threshold=bias_threshold),
+                                 env_kwargs=dict(obs=DEFAULT_OBS, act=act_space, random_init=random_init, biased_random=biased_random, bias_threshold=bias_threshold,
+                                                 random_vel=random_vel, vel_range=vel_range, ang_vel_range=ang_vel_range,
+                                                 hover_threshold=hover_threshold, hover_steps=hover_steps, episode_len_sec=episode_len_sec),
                                  n_envs=4, # Parallel Environments as supported by PyBullet for more efficient training
                                  seed=0
                                  )
-    
+
     #Eval env using biased random, but has used uniform random in the past. This should better preserve the "best" model for filtering purposes
-    eval_env = SafeHoverAviary(obs=DEFAULT_OBS, act=act_space, random_init = random_init, biased_random=biased_random, bias_threshold=bias_threshold) 
+    eval_env = SafeHoverAviary(obs=DEFAULT_OBS, act=act_space, random_init=random_init, biased_random=biased_random, bias_threshold=bias_threshold)
     
     #### Check the environment's spaces ########################
     print('[INFO] Action space:', train_env.action_space)
@@ -152,6 +166,7 @@ def run(multiagent=DEFAULT_MA,
     model = ISAACS(
         'MlpPolicy',
         train_env,
+        gradient_steps=-1,
         tensorboard_log=f"runs/{wandb_run.id}",
         gamma=gamma,
         disturbance_space=disturbance_space,
@@ -271,8 +286,14 @@ if __name__ == '__main__':
     parser.add_argument('--gamma',              default=DEFAULT_GAMMA,                  type=float,     help='Discount factor', metavar='')
     parser.add_argument('--disturbance_ent_coef', default=DEFAULT_DISTURBANCE_ENT_COEF, type=float,    help='Entropy coefficient for the disturbance actor', metavar='')
     parser.add_argument('--actor_update_interval', default=DEFAULT_ACTOR_UPDATE_INTERVAL, type=int,    help='Gradient steps between control actor updates', metavar='')
-    parser.add_argument('--disturbance_bound', default=DEFAULT_DISTURBANCE_BOUND, type=float,    help='bounds for the disturbance space', metavar='')
-    parser.add_argument('--eval_freq', default=DEFAULT_EVAL_FREQ, type=int,    help='how often to run eval', metavar='')
+    parser.add_argument('--disturbance_bound', default=DEFAULT_DISTURBANCE_BOUND, type=float,   help='bounds for the disturbance space', metavar='')
+    parser.add_argument('--eval_freq',         default=DEFAULT_EVAL_FREQ,         type=int,     help='how often to run eval', metavar='')
+    parser.add_argument('--random_vel',      default=DEFAULT_RANDOM_VEL,    type=str2bool, help='Randomize initial velocity at episode start', metavar='')
+    parser.add_argument('--vel_range',       default=DEFAULT_VEL_RANGE,     type=float,    help='Linear velocity randomization range (m/s)', metavar='')
+    parser.add_argument('--ang_vel_range',   default=DEFAULT_ANG_VEL_RANGE, type=float,    help='Angular velocity randomization range (rad/s)', metavar='')
+    parser.add_argument('--hover_threshold', default=DEFAULT_HOVER_THRESHOLD,  type=float, help='Safety margin above which hover counter increments', metavar='')
+    parser.add_argument('--hover_steps',     default=DEFAULT_HOVER_STEPS,   type=int,   help='Consecutive steps above hover_threshold before truncating', metavar='')
+    parser.add_argument('--episode_len_sec', default=DEFAULT_EPISODE_LEN_SEC,     type=int,   help='Hard episode length cap in seconds', metavar='')
     ARGS = parser.parse_args()
 
     run(**vars(ARGS))

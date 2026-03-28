@@ -18,7 +18,7 @@ from stable_baselines3.common.callbacks import BaseCallback
 from stable_baselines3.common.noise import ActionNoise
 from stable_baselines3.common.off_policy_algorithm import OffPolicyAlgorithm
 from stable_baselines3.common.policies import BasePolicy, ContinuousCritic
-from stable_baselines3.common.type_aliases import GymEnv, MaybeCallback, Schedule, RolloutReturn, TrainFreq, TrainFreqUnit, TrainFrequencyUnit
+from stable_baselines3.common.type_aliases import GymEnv, MaybeCallback, Schedule, RolloutReturn, TrainFreq, TrainFrequencyUnit
 from stable_baselines3.common.utils import get_parameters_by_name, polyak_update, should_collect_more_steps
 from stable_baselines3.sac.policies import Actor, CnnPolicy, MlpPolicy, MultiInputPolicy, SACPolicy
 from stable_baselines3 import SAC
@@ -48,9 +48,9 @@ class ISAACS(SAC):
     """
     
     policy_aliases: ClassVar[dict[str, type[BasePolicy]]] = {
-        "MlpPolicy": MlpPolicy,
-        "CnnPolicy": CnnPolicy,
-        "MultiInputPolicy": MultiInputPolicy,
+        "MlpPolicy": ISAACSPolicy,
+        "CnnPolicy": ISAACSPolicy,
+        "MultiInputPolicy": ISAACSPolicy,
     }
     # assign policy-name strings such that we create the right critics and actors with _build()
     policy: ISAACSPolicy
@@ -77,7 +77,6 @@ class ISAACS(SAC):
             replay_buffer_class: Optional[type[ReplayBuffer]] = None,
             replay_buffer_kwargs: Optional[dict[str, Any]] = None,
             optimize_memory_usage: bool = False,
-            n_steps: int = 1,
             ent_coef: Union[str, float] = "auto",
             target_update_interval: int = 1,
             target_entropy: Union[str, float] = "auto",
@@ -125,7 +124,6 @@ class ISAACS(SAC):
                 replay_buffer_class,
                 replay_buffer_kwargs,
                 optimize_memory_usage,
-                n_steps,
                 ent_coef,
                 target_update_interval,
                 target_entropy,
@@ -253,7 +251,7 @@ class ISAACS(SAC):
 
             if isinstance(self.action_space, spaces.Box) and isinstance(self.policy.disturbance_space, spaces.Box):
                 disturbed_actions = np.clip(
-                    actions + disturbances,
+                    actions + disturbances.reshape(actions.shape),
                     self.action_space.low,
                     self.action_space.high
                 )

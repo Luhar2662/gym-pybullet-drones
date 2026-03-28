@@ -23,6 +23,10 @@ DEFAULT_OBS = ObservationType('kin')
 DEFAULT_ACT = ActionType('rpm')
 DEFAULT_AGENTS = 1
 DEFAULT_MA = False
+DEFAULT_DISTURBANCE_SCALE = 0.0   # no disturbance by default; set to e.g. 0.2 to match ISAACS training bounds
+DEFAULT_RANDOM_VEL = False
+DEFAULT_VEL_RANGE = 1.0
+DEFAULT_ANG_VEL_RANGE = 1.0
 
 def eval_random_target():
 
@@ -96,7 +100,8 @@ def random_target():
     
     return random_target, random_target_rpy
 
-def play(model_path=DEFAULT_MODEL_PATH, multiagent=DEFAULT_MA, gui=DEFAULT_GUI, random_init = DEFAULT_RANDOM_INIT, random_eval = DEFAULT_RANDOM_EVAL, safe_init = DEFAULT_SAFE_INIT, record = True):
+def play(model_path=DEFAULT_MODEL_PATH, multiagent=DEFAULT_MA, gui=DEFAULT_GUI, random_init=DEFAULT_RANDOM_INIT, random_eval=DEFAULT_RANDOM_EVAL, safe_init=DEFAULT_SAFE_INIT, record=True, disturbance_scale=DEFAULT_DISTURBANCE_SCALE,
+         random_vel=DEFAULT_RANDOM_VEL, vel_range=DEFAULT_VEL_RANGE, ang_vel_range=DEFAULT_ANG_VEL_RANGE):
     #### Load saved model ####
     if not os.path.isfile(model_path):
         print(f"[ERROR] Model file not found at: {model_path}")
@@ -138,7 +143,8 @@ def play(model_path=DEFAULT_MODEL_PATH, multiagent=DEFAULT_MA, gui=DEFAULT_GUI, 
 
     #### Create test environment ####
     if not multiagent:
-        env = SafeHoverAviary(gui=gui, obs=DEFAULT_OBS, act=DEFAULT_ACT, initial_xyzs=start_pos, initial_rpys= start_rpy, random_eval=random_eval)
+        env = SafeHoverAviary(gui=gui, obs=DEFAULT_OBS, act=DEFAULT_ACT, initial_xyzs=start_pos, initial_rpys=start_rpy, random_eval=random_eval,
+                              random_vel=random_vel, vel_range=vel_range, ang_vel_range=ang_vel_range)
     else:
         env = MultiHoverAviary(gui=gui, num_drones=DEFAULT_AGENTS, obs=DEFAULT_OBS, act=DEFAULT_ACT)
 
@@ -155,6 +161,9 @@ def play(model_path=DEFAULT_MODEL_PATH, multiagent=DEFAULT_MA, gui=DEFAULT_GUI, 
 
     for i in range((env.EPISODE_LEN_SEC+2)*env.CTRL_FREQ):
         action, _ = model.predict(obs, deterministic=True)
+        if disturbance_scale > 0.0:
+            noise = np.random.uniform(-disturbance_scale, disturbance_scale, size=action.shape)
+            action = np.clip(action + noise, env.action_space.low, env.action_space.high)
         obs, reward, terminated, truncated, info = env.step(action)
 
         obs2 = obs.squeeze()
@@ -212,7 +221,11 @@ if __name__ == "__main__":
     parser.add_argument('--random_init', default=DEFAULT_RANDOM_INIT, type=str2bool,           help='whether to random init during rollout', metavar='')
     parser.add_argument('--random_eval', default=DEFAULT_RANDOM_EVAL, type=str2bool,           help='whether to randomize according to the eval bounds set in eval_random_target()', metavar='')
     parser.add_argument('--safe_init', default=DEFAULT_SAFE_INIT, type=str2bool,           help='whether to randomize according to a safety check', metavar='')
-    
+    parser.add_argument('--disturbance_scale', default=DEFAULT_DISTURBANCE_SCALE, type=float,   help='uniform noise magnitude added to each action dimension (0 = no disturbance; use same value as disturbance_bound in training)', metavar='')
+    parser.add_argument('--random_vel',        default=DEFAULT_RANDOM_VEL,        type=str2bool, help='inject a random velocity at episode start', metavar='')
+    parser.add_argument('--vel_range',         default=DEFAULT_VEL_RANGE,         type=float,   help='linear velocity randomization range (m/s)', metavar='')
+    parser.add_argument('--ang_vel_range',     default=DEFAULT_ANG_VEL_RANGE,     type=float,   help='angular velocity randomization range (rad/s)', metavar='')
+
     args = parser.parse_args()
 
     play(**vars(args))

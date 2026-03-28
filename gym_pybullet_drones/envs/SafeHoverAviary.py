@@ -4,11 +4,23 @@ import torch as th
 
 import pybullet as p
 
+import gymnasium as gym
+
 import pybullet_data
 from gym_pybullet_drones.control.DSLPIDControl import DSLPIDControl
 from gym_pybullet_drones.envs.BaseRLAviary import BaseRLAviary
 from gym_pybullet_drones.utils.enums import DroneModel, Physics, ActionType, ObservationType
 import time
+
+class DisturbedEnvWrapper(gym.Wrapper):
+    def __init__(self, env, disturbance_bound = .2):
+        super().__init__(env)
+        self.disturbance_bound = disturbance_bound
+    
+    def step(self, action):
+        noise = np.random.uniform(-self.disturbance_bound, self.disturbance_bound, size=action.shape)
+        disturbed = np.clip(action+noise, self.action_space.low, self.action_space.high)
+        return self.env.step(disturbed)
 
 class SafeHoverAviary(BaseRLAviary):
     """Variation of the single-agent hover environment, using safety margins for rewards for compatibility with SafetySAC."""
@@ -34,6 +46,12 @@ class SafeHoverAviary(BaseRLAviary):
                  bias_threshold = .5,
                  random_eval = False,
                  fallback_model = None,
+                 random_vel = False,
+                 vel_range = 1.0,
+                 ang_vel_range = 1.0,
+                 hover_threshold = 0.8,
+                 hover_steps = 30,
+                 episode_len_sec = 8,
                  ):
         """Initialization of a single agent RL environment.
 
@@ -69,17 +87,36 @@ class SafeHoverAviary(BaseRLAviary):
             For use with safe initialization and filtered training
         random_eval: bool, optional
             Decides whether to use random_eval_target() when initializing episodes
+        fallback_model: ISAACS model, optional
+        
+        random_vel: bool, optional
+
+        vel_range: float, optional
+
+        ang_vel_range: float, optional
+
+        hover_threshold: float, optional
+
+        hover_steps: int, optional
+
+        episode_len_sec: int, optional
 
         """
         self.NUM_SEGMENTS = num_segments
         self.warmup_called = 0
         self.WARMUP_DUR = warmup_dur
         self.RANDOM_INIT = random_init
+        self.RANDOM_VEL = random_vel
+        self.VEL_RANGE = vel_range
+        self.ANG_VEL_RANGE = ang_vel_range
+        self.HOVER_THRESHOLD = hover_threshold
+        self.HOVER_STEPS = hover_steps
+        self.hover_counter = 0
         self.SEGMENT_PATH = segment_path
         self.RANDOM_TARGET = None
         self.RANDOM_TARGET_RPY = None
         self.TARGET_POS = np.array([0,0,1])
-        self.EPISODE_LEN_SEC = 8
+        self.EPISODE_LEN_SEC = episode_len_sec
         self.BIASED_RANDOM = biased_random,
         self.BIAS_THRESHOLD = bias_threshold
         self.RANDOM_EVAL = random_eval
@@ -173,14 +210,24 @@ class SafeHoverAviary(BaseRLAviary):
 
         """
         state = self._getDroneStateVector(0)
-        #if (abs(state[0]) > 1 or abs(state[1]) > 1 or state[2] > 2.0 # Truncate when the drone is too far away
-        #     or abs(state[7]) > .4 or abs(state[8]) > .4 # Truncate when the drone is too tilted
-        #):
-        #    return True
-        if self.step_counter/self.PYB_FREQ > self.EPISODE_LEN_SEC:
-            return True
+        ground_margin = state[2]
+        left_margin = 1 - state[1]
+        right_margin = state[1] + 1
+        front_margin = 1 - state[0]
+        back_margin = state[0] + 1
+        ceil_margin = 2 - state[2]
+        margin = min(ground_margin, ceil_margin, back_margin, front_margin, left_margin, right_margin)
+
+        if margin >= self.HOVER_THRESHOLD:
+            self.hover_counter += 1
         else:
-            return False
+            self.hover_counter = 0
+
+        if self.hover_counter >= self.HOVER_STEPS:
+            return True
+        if self.step_counter / self.PYB_FREQ > self.EPISODE_LEN_SEC:
+            return True
+        return False
 
     ################################################################################
     
@@ -249,7 +296,7 @@ class SafeHoverAviary(BaseRLAviary):
                 target = self.RANDOM_TARGET
                 target_rpy = self.RANDOM_TARGET_RPY
             
-        print("starting warmup!! target: ", target, " ", target_rpy, " warmup number: ", self.warmup_called)
+        #print("starting warmup!! target: ", target, " ", target_rpy, " warmup number: ", self.warmup_called)
         self.warmup_called += 1
         if control_loop:
             print("calling control loop (first run only)")
@@ -259,7 +306,7 @@ class SafeHoverAviary(BaseRLAviary):
             waypoint_ct = 0
             waypoint_dur = self.WARMUP_DUR / self.NUM_SEGMENTS
             
-            #print("target: ", target)
+            
             #TODO: Use ctrl_aviary or _nextstep() calcs to get to setpoint.
             ctrl_client = DSLPIDControl(drone_model = self.DRONE_MODEL)
             ctrl_client = [DSLPIDControl(drone_model = self.DRONE_MODEL) for i in range(self.NUM_DRONES)]
@@ -288,7 +335,7 @@ class SafeHoverAviary(BaseRLAviary):
                 #print("control obs: ", control_obs)
                 #time.sleep(30)
 
-                #PROBLEM -- DESYNCED / LAGGING BY ONE. CUSTOM ASSIGNMENT IS WORKING THOUGH!
+                
                 if first_step:
                     print("starting position: ", control_obs[0])
                     first_step = False
@@ -474,6 +521,15 @@ class SafeHoverAviary(BaseRLAviary):
         #print('random init: ', self.RANDOM_INIT)
         if self.RANDOM_INIT:
             self._warmup()
+        self.hover_counter = 0  # reset AFTER warmup so PID traversal doesn't pre-fill the counter
+        if self.RANDOM_VEL:
+            lin_vel = np.random.uniform(-self.VEL_RANGE, self.VEL_RANGE, size=3)
+            ang_vel = np.random.uniform(-self.ANG_VEL_RANGE, self.ANG_VEL_RANGE, size=3)
+            p.resetBaseVelocity(self.DRONE_IDS[0],
+                                linearVelocity=lin_vel,
+                                angularVelocity=ang_vel,
+                                physicsClientId=self.CLIENT)
+            self._updateAndStoreKinematicInformation()
         #### Start video recording #################################
         self._startVideoRecording()
         #### Return the initial observation ########################

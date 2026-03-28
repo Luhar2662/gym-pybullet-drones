@@ -367,6 +367,11 @@ class ISAACSPolicy(SACPolicy):
         disturbance_space: spaces.Box --> the disturbance space for the environment, if it exists. By default,
             the disturbance space will be assumed to be identical to the action space
         '''
+        if disturbance_space is None:
+            self.disturbance_space = action_space
+        else:
+            self.disturbance_space = disturbance_space
+
         super().__init__(
             observation_space,
             action_space,
@@ -385,10 +390,6 @@ class ISAACSPolicy(SACPolicy):
             n_critics,
             share_features_extractor
         )
-        if disturbance_space is None:
-            self.disturbance_space = action_space
-        else:
-            self.disturbance_space = disturbance_space
         
         self.disturbance_dim = get_action_dim(self.disturbance_space)
         #or self.disturbance_space.shape[0] --> unsure!

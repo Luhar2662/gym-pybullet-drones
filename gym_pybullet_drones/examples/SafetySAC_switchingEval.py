@@ -18,6 +18,7 @@ import pybullet as p
 
 from gym_pybullet_drones.utils.enums import DroneModel, Physics
 from gym_pybullet_drones.envs.CtrlAviary import CtrlAviary
+from gym_pybullet_drones.envs.SafeHoverAviary import SafeHoverAviary
 from gym_pybullet_drones.control.DSLPIDControl import DSLPIDControl
 from gym_pybullet_drones.utils.Logger import Logger
 from gym_pybullet_drones.utils.utils import sync, str2bool
@@ -33,7 +34,7 @@ DEFAULT_RECORD_VISION = False
 DEFAULT_PLOT = True
 DEFAULT_USER_DEBUG_GUI = False
 DEFAULT_SIMULATION_FREQ_HZ = 240
-DEFAULT_DURATION_SEC = 12
+DEFAULT_DURATION_SEC = 6
 DEFAULT_OUTPUT_FOLDER = 'results'
 DEFAULT_COLAB = False
 DEFAULT_NUM_SEGMENTS = 1
@@ -42,6 +43,8 @@ DEFAULT_MODEL_PATH = "results/best_model.zip"
 DEFAULT_RANDOM_INIT = False
 DEFAULT_GUARD_DURATION = 10
 DEFAULT_SAFETY_THRESHOLD = 0.25
+DEFAULT_SAFE_TARGET = False
+DEFAULT_BIAS_TARGET = False
 
 #Match ctrl_freq from the SafeHoverAviary instance that training occured in for an action buffer
 SAFE_CTRL_FREQ = 30
@@ -105,6 +108,26 @@ def rpm_to_normalized(rpm, hover):
     '''
     return np.clip((rpm / hover - 1.0) / .05, -1, 1).astype(np.float32)
 
+def add_bounds_box(p_client, x_lim=(-1, 1), y_lim=(-1, 1), z_lim=(0, 2), color=[0, 0.5, 1]):
+    '''
+    Draw the 12 edges of the safety bounding box using PyBullet debug lines.
+    '''
+    x0, x1 = x_lim
+    y0, y1 = y_lim
+    z0, z1 = z_lim
+    corners = [
+        [x0, y0, z0], [x1, y0, z0], [x1, y1, z0], [x0, y1, z0],  # bottom face
+        [x0, y0, z1], [x1, y0, z1], [x1, y1, z1], [x0, y1, z1],  # top face
+    ]
+    edges = [
+        (0,1),(1,2),(2,3),(3,0),  # bottom
+        (4,5),(5,6),(6,7),(7,4),  # top
+        (0,4),(1,5),(2,6),(3,7),  # verticals
+    ]
+    for a, b in edges:
+        p.addUserDebugLine(corners[a], corners[b], lineColorRGB=color, lineWidth=1.5,
+                           physicsClientId=p_client)
+
 def add_target_marker(pos, p_client):
     '''
     Helper function that appends the target pos to the visualization using the pybullet client
@@ -117,6 +140,63 @@ def add_target_marker(pos, p_client):
         f"({pos[0]:.2f}, {pos[1]:.2f}, {pos[2]:.2f})", textPosition=pos + np.array([0, 0, 0.1]), textColorRGB=[1, 0, 0],
         textSize=1.2, physicsClientId=p_client,
     )
+
+def random_target():
+    target = np.array([[np.random.uniform(-.75, .75),
+                        np.random.uniform(-.75, .75),
+                        np.random.uniform(0.2, 2.0)]])
+    return target
+
+def biased_target():
+
+        '''
+        Pull from a specific safety margin with certainty, such that we always initialize from meaningful
+        positions for testing!
+        '''
+        
+        intervals = [[-.9,-.5],[.5,.9]]
+        z_intervals = [[.1,.5],[1.5,1.9]]
+
+        x_int = np.random.choice([0,1])
+        y_int = np.random.choice([0,1])
+        z_int = np.random.choice([0,1])
+
+        random_target = np.array([[np.random.uniform(intervals[x_int][0],intervals[x_int][1]),
+                               np.random.uniform(intervals[y_int][0],intervals[y_int][1]),
+                               np.random.uniform(z_intervals[z_int][0],z_intervals[z_int][1])] for i in range(1)])
+
+        random_target_rpy = np.array([[0,0,0
+                            ] for i in range(1)])
+        
+        return random_target, random_target_rpy
+
+def safe_random_init(model, threshold):
+        verified = False
+        while not verified:
+                candidate_pos, candidate_rpy = biased_target()
+                
+
+                #check viability using a helper env
+                test_env = SafeHoverAviary(gui=False, initial_xyzs=candidate_pos, initial_rpys= candidate_rpy)
+
+                obs, _ = test_env.reset(seed=42, options={})
+                action, _ = model.predict(obs, deterministic=True)
+
+                obs_t, _ = model.policy.obs_to_tensor(obs)
+                act_t = th.as_tensor(action, device=model.device).float()
+
+                with th.no_grad():
+                    q1, q2 = model.policy.critic(obs_t, act_t)
+
+                q_avg = np.mean([q1.item(), q2.item()])
+
+                if q_avg > threshold:
+                    verified = True
+                else: 
+                    print("unsafe config: ", candidate_pos, ", resampling!")
+    
+            #verified safe, so pass on!
+        return candidate_pos, candidate_rpy
 
 ######## MAIN LOOP ##############
 
@@ -138,6 +218,8 @@ def run( #follows PID control examples in gym_pybullet_drones
         random_init=DEFAULT_RANDOM_INIT,
         safety_threshold=DEFAULT_SAFETY_THRESHOLD,
         guard_duration=DEFAULT_GUARD_DURATION,
+        safe_target = DEFAULT_SAFE_TARGET,
+        bias_target = DEFAULT_BIAS_TARGET,
 ):
     # Load Safety Filter fallback model and critic from --model_path
     if not os.path.isfile(model_path):
@@ -156,9 +238,16 @@ def run( #follows PID control examples in gym_pybullet_drones
 
     start_rpy = np.zeros((1, 3))
 
-    target = np.array([[np.random.uniform(-1, 1),
-                        np.random.uniform(-1, 1),
-                        np.random.uniform(0.1, 2.0)]])
+    if safe_target:
+        safe_pos,_ = safe_random_init(model, safety_threshold)
+        print("safe_pos: ", safe_pos)
+        target = safe_pos
+    elif bias_target:
+        bias_pos,_ = biased_target()
+        target = bias_pos[0]
+    else:
+        target = random_target()
+
     print(f"[INFO] Start: {start_pos[0]},  Target: {target[0]}")
 
     waypoints = np.array([segment(start_pos[i], target[i], num_segments) for i in range(num_drones)])
@@ -203,6 +292,7 @@ def run( #follows PID control examples in gym_pybullet_drones
     env.reset(seed=42, options={})
 
     add_target_marker(target[0], env.getPyBulletClient()) #add target visualization
+    add_bounds_box(env.getPyBulletClient()) #visualize safety bounds
     start = time.time()
 
     for i in range(int(duration_sec * env.CTRL_FREQ)):
@@ -217,6 +307,7 @@ def run( #follows PID control examples in gym_pybullet_drones
             print("out of bounds at step ", i, " at position:(", drone_x, ", ", drone_y, ", ", drone_z,")")
             env.reset(seed=42, options = {})
             add_target_marker(target[0], env.getPyBulletClient()) #marker goes away on reset()
+            add_bounds_box(env.getPyBulletClient())
             
             #Reset relevant elements
             for c in ctrl: #reset pid controllers
@@ -282,6 +373,11 @@ def run( #follows PID control examples in gym_pybullet_drones
             safety_violations += 1
             print("Safety Violation at step ", i, " at position:(", drone_x, ", ", drone_y, ", ", drone_z,")")
 
+        #Check if we reached the vicinity of the target
+        if abs(drone_x - target[0][0]) < .1 and abs(drone_y - target[0][1]) < .1 and abs(drone_z - target[0][2]) < .1:
+            reached = True
+
+        
         #Log iteration
         logger.log(
             drone=0,
@@ -299,6 +395,7 @@ def run( #follows PID control examples in gym_pybullet_drones
     env.close()
     print("[RESULTS] Guard triggered:", guard_activated, " times!")
     print("[RESULTS] Safety violations:", safety_violations, " times!")
+    print("[RESULTS] Reached target:", reached)
 
     logger.save()
     logger.save_as_csv("pid_eval")
@@ -324,6 +421,8 @@ if __name__ == "__main__":
     parser.add_argument('--random_init',        default=DEFAULT_RANDOM_INIT,      type=str2bool,   help='whether to randomly initiate drone start', metavar='')
     parser.add_argument('--guard_duration',     default=DEFAULT_GUARD_DURATION,   type=int,        help='How many timesteps to keep guard active after switch', metavar='')
     parser.add_argument('--safety_threshold',   default=DEFAULT_SAFETY_THRESHOLD, type=float,      help='threshold q value for triggering guard activation' ,metavar='')
+    parser.add_argument('--safe_target',        default=DEFAULT_SAFE_TARGET,      type=str2bool,   help='whether to safely initiate drone target', metavar='')
+    parser.add_argument('--bias_target',        default=DEFAULT_BIAS_TARGET,      type=str2bool,   help='whether to bias initiate drone target', metavar='')
     ARGS = parser.parse_args()
 
     run(**vars(ARGS))
