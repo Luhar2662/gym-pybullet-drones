@@ -55,9 +55,9 @@ DEFAULT_GAMMA = .99
 DEFAULT_EVAL_FREQ = 5000
 
 #Disturbance specific defailts for ISAACS
-DEFAULT_DISTURBANCE_ENT_COEF = 1.0
+DEFAULT_DISTURBANCE_ENT_COEF = .2
 DEFAULT_ACTOR_UPDATE_INTERVAL = 1
-DEFAULT_DISTURBANCE_BOUND = .2
+DEFAULT_DISTURBANCE_BOUND = .1
 
 # Default arguments for random initializing behavior defined in SafeHoverAviary
 DEFAULT_SEGMENT_PATH = True
@@ -71,6 +71,12 @@ DEFAULT_ANG_VEL_RANGE = 1.0
 DEFAULT_HOVER_THRESHOLD = .8
 DEFAULT_HOVER_STEPS = 30
 DEFAULT_EPISODE_LEN_SEC = 6
+
+# Leaderboard / tournament defaults
+DEFAULT_LEADERBOARD_UPDATE_FREQ = 0   # 0 = disabled
+DEFAULT_LEADERBOARD_K_U = 5
+DEFAULT_LEADERBOARD_K_D = 5
+DEFAULT_LEADERBOARD_N_EPS = 5
 
 def run(multiagent=DEFAULT_MA,
         action_space = DEFAULT_ACTION_STRING,
@@ -97,6 +103,10 @@ def run(multiagent=DEFAULT_MA,
         hover_threshold = DEFAULT_HOVER_THRESHOLD,
         hover_steps = DEFAULT_HOVER_STEPS,
         episode_len_sec = DEFAULT_EPISODE_LEN_SEC,
+        leaderboard_update_freq = DEFAULT_LEADERBOARD_UPDATE_FREQ,
+        leaderboard_k_u = DEFAULT_LEADERBOARD_K_U,
+        leaderboard_k_d = DEFAULT_LEADERBOARD_K_D,
+        leaderboard_n_eps = DEFAULT_LEADERBOARD_N_EPS,
 ):
     '''
     action_space: one of 'rpm', 'pid', 'vel', 'one_d_rpm', 'one_d_pid'
@@ -145,13 +155,17 @@ def run(multiagent=DEFAULT_MA,
 
     #### Create the model #######################################
     config = {
-        "policy_type": "MlpPolicy", 
+        "policy_type": "MlpPolicy",
         "total_timesteps": 10000000,
-        "env_name": "SafeHoverAviary", 
+        "env_name": "SafeHoverAviary",
         "algorithm": "ISAACS",
         "gamma": gamma,
         "disturbance_ent_coef": disturbance_ent_coef,
         "actor_update_interval": actor_update_interval,
+        "leaderboard_update_freq": leaderboard_update_freq,
+        "leaderboard_k_u": leaderboard_k_u,
+        "leaderboard_k_d": leaderboard_k_d,
+        "leaderboard_n_eps": leaderboard_n_eps,
     }
 
      # Log run to WandB
@@ -173,6 +187,11 @@ def run(multiagent=DEFAULT_MA,
         disturbance_space=disturbance_space,
         disturbance_ent_coef=disturbance_ent_coef,
         actor_update_interval=actor_update_interval,
+        leaderboard_eval_env=eval_env,
+        leaderboard_update_freq=leaderboard_update_freq,
+        leaderboard_k_u=leaderboard_k_u,
+        leaderboard_k_d=leaderboard_k_d,
+        leaderboard_n_eps=leaderboard_n_eps,
         verbose=1,
     )
 
@@ -295,6 +314,10 @@ if __name__ == '__main__':
     parser.add_argument('--hover_threshold', default=DEFAULT_HOVER_THRESHOLD,  type=float, help='Safety margin above which hover counter increments', metavar='')
     parser.add_argument('--hover_steps',     default=DEFAULT_HOVER_STEPS,   type=int,   help='Consecutive steps above hover_threshold before truncating', metavar='')
     parser.add_argument('--episode_len_sec', default=DEFAULT_EPISODE_LEN_SEC,     type=int,   help='Hard episode length cap in seconds', metavar='')
+    parser.add_argument('--leaderboard_update_freq', default=DEFAULT_LEADERBOARD_UPDATE_FREQ, type=int, help='Gradient steps between leaderboard tournament updates (0=disabled)', metavar='')
+    parser.add_argument('--leaderboard_k_u', default=DEFAULT_LEADERBOARD_K_U, type=int, help='Max control policies retained in leaderboard', metavar='')
+    parser.add_argument('--leaderboard_k_d', default=DEFAULT_LEADERBOARD_K_D, type=int, help='Max disturbance policies retained in leaderboard', metavar='')
+    parser.add_argument('--leaderboard_n_eps', default=DEFAULT_LEADERBOARD_N_EPS, type=int, help='Episodes per matchup in leaderboard tournament', metavar='')
     ARGS = parser.parse_args()
 
     run(**vars(ARGS))

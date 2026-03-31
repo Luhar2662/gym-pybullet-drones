@@ -91,13 +91,18 @@ class ISAACS(SAC):
             device: Union[th.device, str] = "auto",
             _init_setup_model: bool = True,
             disturbance_space: spaces.Box = None,
-            disturbance_ent_coef: float = 1.0,
+            disturbance_ent_coef: float = .2,
             actor_update_interval: int = 1,
+            leaderboard_eval_env = None,
+            leaderboard_update_freq: int = 0,
+            leaderboard_k_u: int = 5,
+            leaderboard_k_d: int = 5,
+            leaderboard_n_eps: int = 5,
     ):
         #load IsaacsReplayBuffer unless a custom buffer has been passed
         if replay_buffer_class is None:
             replay_buffer_class = ISAACSReplayBuffer
-        
+
         if policy_kwargs is None:
             policy_kwargs = {}
         if replay_buffer_kwargs is None:
@@ -105,6 +110,11 @@ class ISAACS(SAC):
         self.disturbance_space = disturbance_space #even if None, _setup_model will handle this
         self.disturbance_ent_coef = disturbance_ent_coef
         self.actor_update_interval = actor_update_interval
+        self.leaderboard_eval_env = leaderboard_eval_env
+        self.leaderboard_update_freq = leaderboard_update_freq
+        self.leaderboard_k_u = leaderboard_k_u
+        self.leaderboard_k_d = leaderboard_k_d
+        self.leaderboard_n_eps = leaderboard_n_eps
 
         policy_kwargs["disturbance_space"] = disturbance_space
         replay_buffer_kwargs["disturbance_space"] = disturbance_space
@@ -152,7 +162,13 @@ class ISAACS(SAC):
         '''
         super()._create_aliases()
         self.disturbance_actor = self.policy.disturbance_actor
-        self.leaderboard = ISAACSLeaderboard(self.disturbance_actor)
+        self.leaderboard = ISAACSLeaderboard(
+            self.disturbance_actor,
+            eval_env=self.leaderboard_eval_env,
+            k_u=self.leaderboard_k_u,
+            k_d=self.leaderboard_k_d,
+            n_eps=self.leaderboard_n_eps,
+        )
     
 
     # Data collection and replay buffer sampling methods:
@@ -228,7 +244,7 @@ class ISAACS(SAC):
         # Sample one episode adversary per env from the leaderboard at the start of each
         # rollout. Re-sampled whenever an episode ends
 
-        # STUB: leaderboard always returns self.disturbance_actor, so this is a no-op for now.
+        
         episode_adversaries = [self.leaderboard.sample_disturbance_policy() for _ in range(env.num_envs)]
 
         while should_collect_more_steps(train_freq, num_collected_steps, num_collected_episodes):
@@ -468,9 +484,13 @@ class ISAACS(SAC):
             ############## Actor update ##############################
             # Minimizing this maximizes Q (safety) + entropy bonus
             if gradient_step % self.actor_update_interval == 0: #default runs every step!
-                # Update leaderboard: add current policies, run tournament, recompute P_{Π^d}.
-                # STUB: no-op until the full leaderboard is implemented.
-                self.leaderboard.update(self.actor, self.disturbance_actor)
+                # Run tournament and update leaderboard at the specified frequency.
+                # leaderboard_update_freq=0 disables the tournament (eval_env=None also no-ops).
+                total_step = self._n_updates + gradient_step
+                if (self.leaderboard_update_freq > 0
+                        and total_step > 0
+                        and total_step % self.leaderboard_update_freq == 0):
+                    self.leaderboard.update(self.actor, self.disturbance_actor)
 
                 #sample again (this happens earlier in safety_sac, placed here for readability)
                 u_pi, u_log_prob = self.actor.action_log_prob(replay_data.observations)

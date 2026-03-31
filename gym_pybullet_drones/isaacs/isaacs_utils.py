@@ -479,12 +479,12 @@ class ISAACSLeaderboard:
         """
         Sample one disturbance policy for a new episode from P_{Π^d}.
         Called once per episode (or per env reset) in collect_rollouts.
-        
+
         """
         if len(self.dist_policies) == 0:
             return self.current_disturbance
 
-        idx = int(np.random.choice(len(self.dist_policies)), p = self.sample_dist)
+        idx = int(np.random.choice(len(self.dist_policies), p=self.sample_dist))
         return self.dist_policies[idx]
 
     def update(self, pi_u: Actor, pi_d: DisturbanceActor) -> None:
@@ -526,7 +526,7 @@ class ISAACSLeaderboard:
         if len(self.actor_policies) > self.k_u: #collate the average win rates against each actor, and remove the one with the highest
             average_win_rates = []
             for u in range(len(self.actor_policies)):
-                rates = [self.win_rates.get((d, u), 0.0) for d in range(self.dist_policies)]
+                rates = [self.win_rates.get((d, u), 0.0) for d in range(len(self.dist_policies))]
                 average_win_rates.append(np.mean(rates) if rates else 0.0)
             #now, remove the actor with the highest disturbance win rate
             self.remove_actor(int(np.argmax(average_win_rates)))
@@ -563,9 +563,9 @@ class ISAACSLeaderboard:
             while not (done or truncated):
                 obs_t = th.FloatTensor(obs).unsqueeze(0).to(device)
                 with th.no_grad():
-                    action = pi_u.predict(obs_t, deterministic = True).cpu().numpy().squeeze(0)
-                    disturbance = pi_d.predict(obs_t, deterministic = True).cpu().numpy().squeeze(0)
-                #by default, model disturbance as additive
+                    action = pi_u._predict(obs_t, deterministic=True).cpu().numpy().squeeze(0)
+                    disturbance = pi_d._predict(obs_t, deterministic=True).cpu().numpy().squeeze(0)
+                # by default, model disturbance as additive
                 disturbed = np.clip(action + disturbance, env.action_space.low, env.action_space.high)
 
                 obs, margin, done, truncated, _ = env.step(disturbed)
@@ -584,9 +584,9 @@ class ISAACSLeaderboard:
         '''
         m = []
         for dist in range(len(self.dist_policies)):
-            rates = [self.win_rate_matrix.get((dist, act), 0.0) for act in range(len(self.actor_policies))]
-            m.append(float(np.mean(rates))) 
-        return np.array(m, dtype = np.float64)
+            rates = [self.win_rates.get((dist, act), 0.0) for act in range(len(self.actor_policies))]
+            m.append(float(np.mean(rates)) if rates else 0.0)
+        return np.array(m, dtype=np.float64)
 
     def remove_actor(self, idx) -> None:
         '''
@@ -611,9 +611,9 @@ class ISAACSLeaderboard:
         for (d, u), wr in self.win_rates.items():
             if d == idx:
                 continue
-            new_d = d if d < idx else d - 1 #shift all subsequent disturbances one step down
-            new_win_rates[(d, new_d)] = wr #place new pair in win rates
-        
+            new_d = d if d < idx else d - 1  # shift all subsequent disturbances one step down
+            new_win_rates[(new_d, u)] = wr
+
         self.win_rates = new_win_rates
                 
 

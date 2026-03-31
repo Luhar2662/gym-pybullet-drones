@@ -33,17 +33,23 @@ from gym_pybullet_drones.envs.MultiHoverAviary import MultiHoverAviary
 from gym_pybullet_drones.utils.utils import sync, str2bool
 from gym_pybullet_drones.utils.enums import ObservationType, ActionType
 
+from wandb.integration.sb3 import WandbCallback
+import wandb
+
 DEFAULT_GUI = True
 DEFAULT_RECORD_VIDEO = False
 DEFAULT_OUTPUT_FOLDER = 'results'
 DEFAULT_COLAB = False
 
 DEFAULT_OBS = ObservationType('kin') # 'kin' or 'rgb'
-DEFAULT_ACT = ActionType('one_d_rpm') # 'rpm' or 'pid' or 'vel' or 'one_d_rpm' or 'one_d_pid'
+DEFAULT_ACT = ActionType('rpm') # 'rpm' or 'pid' or 'vel' or 'one_d_rpm' or 'one_d_pid'
 DEFAULT_AGENTS = 2
 DEFAULT_MA = False
+DEFAULT_TERMINATE_ON_BOUNDARY = True
 
-def run(multiagent=DEFAULT_MA, output_folder=DEFAULT_OUTPUT_FOLDER, gui=DEFAULT_GUI, plot=True, colab=DEFAULT_COLAB, record_video=DEFAULT_RECORD_VIDEO, local=True):
+def run(multiagent=DEFAULT_MA, output_folder=DEFAULT_OUTPUT_FOLDER, gui=DEFAULT_GUI, plot=True, colab=DEFAULT_COLAB, record_video=DEFAULT_RECORD_VIDEO, local=True, terminate_on_boundary = DEFAULT_TERMINATE_ON_BOUNDARY):
+
+    act_space = ActionType('rpm')
 
     filename = os.path.join(output_folder, 'save-'+datetime.now().strftime("%m.%d.%Y_%H.%M.%S"))
     if not os.path.exists(filename):
@@ -51,27 +57,40 @@ def run(multiagent=DEFAULT_MA, output_folder=DEFAULT_OUTPUT_FOLDER, gui=DEFAULT_
 
     if not multiagent:
         train_env = make_vec_env(HoverAviary,
-                                 env_kwargs=dict(obs=DEFAULT_OBS, act=DEFAULT_ACT),
+                                 env_kwargs=dict(obs=DEFAULT_OBS, act=act_space, terminate_on_boundary=terminate_on_boundary),
                                  n_envs=1,
                                  seed=0
                                  )
-        eval_env = HoverAviary(obs=DEFAULT_OBS, act=DEFAULT_ACT)
+        eval_env = HoverAviary(obs=DEFAULT_OBS, act=act_space, terminate_on_boundary=terminate_on_boundary)
     else:
         train_env = make_vec_env(MultiHoverAviary,
-                                 env_kwargs=dict(num_drones=DEFAULT_AGENTS, obs=DEFAULT_OBS, act=DEFAULT_ACT),
+                                 env_kwargs=dict(num_drones=DEFAULT_AGENTS, obs=DEFAULT_OBS, act=act_space),
                                  n_envs=1,
                                  seed=0
                                  )
-        eval_env = MultiHoverAviary(num_drones=DEFAULT_AGENTS, obs=DEFAULT_OBS, act=DEFAULT_ACT)
+        eval_env = MultiHoverAviary(num_drones=DEFAULT_AGENTS, obs=DEFAULT_OBS, act=act_space)
 
     #### Check the environment's spaces ########################
     print('[INFO] Action space:', train_env.action_space)
     print('[INFO] Observation space:', train_env.observation_space)
 
     #### Train the model #######################################
+    config = {
+        "policy_type": "MlpPolicy",
+        "total_timesteps": int(1e7),
+        "env_name": "MultiHoverAviary" if multiagent else "HoverAviary",
+    }
+    wandb_run = wandb.init(
+        project="SafeDroneFlight",
+        config=config,
+        sync_tensorboard=True,
+        monitor_gym=False,
+        save_code=False,
+    )
+
     model = PPO('MlpPolicy',
                 train_env,
-                # tensorboard_log=filename+'/tb/',
+                tensorboard_log=f"runs/{wandb_run.id}",
                 verbose=1)
 
     #### Target cumulative rewards (problem-dependent) ##########
@@ -89,8 +108,13 @@ def run(multiagent=DEFAULT_MA, output_folder=DEFAULT_OUTPUT_FOLDER, gui=DEFAULT_
                                  eval_freq=int(1000),
                                  deterministic=True,
                                  render=False)
+    wandb_callback = WandbCallback(
+        gradient_save_freq=100,
+        model_save_path=f"models/{wandb_run.id}",
+        verbose=2,
+    )
     model.learn(total_timesteps=int(1e7) if local else int(1e2), # shorter training in GitHub Actions pytest
-                callback=eval_callback,
+                callback=[eval_callback, wandb_callback],
                 log_interval=100)
 
     #### Save the model ########################################
@@ -109,6 +133,7 @@ def run(multiagent=DEFAULT_MA, output_folder=DEFAULT_OUTPUT_FOLDER, gui=DEFAULT_
     ############################################################
 
     if local:
+        train_env.env_method('print_violations')
         input("Press Enter to continue...")
 
     # if os.path.isfile(filename+'/final_model.zip'):
@@ -195,6 +220,7 @@ if __name__ == '__main__':
     parser.add_argument('--record_video',       default=DEFAULT_RECORD_VIDEO,  type=str2bool,      help='Whether to record a video (default: False)', metavar='')
     parser.add_argument('--output_folder',      default=DEFAULT_OUTPUT_FOLDER, type=str,           help='Folder where to save logs (default: "results")', metavar='')
     parser.add_argument('--colab',              default=DEFAULT_COLAB,         type=bool,          help='Whether example is being run by a notebook (default: "False")', metavar='')
+    parser.add_argument('--terminate_on_boundary',              default=DEFAULT_TERMINATE_ON_BOUNDARY,         type=bool,          help='Whether example is being run by a notebook (default: "False")', metavar='')
     ARGS = parser.parse_args()
 
     run(**vars(ARGS))

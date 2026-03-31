@@ -224,8 +224,10 @@ class SafeHoverAviary(BaseRLAviary):
         else:
             self.hover_counter = 0
 
-        if self.hover_counter >= self.HOVER_STEPS:
-            return True
+        #disable hover truncation for now
+        #if self.hover_counter >= self.HOVER_STEPS:
+            #return True
+            
         if self.step_counter / self.PYB_FREQ > self.EPISODE_LEN_SEC:
             return True
         return False

@@ -72,7 +72,6 @@ def run(multiagent=DEFAULT_MA, action_space = DEFAULT_ACTION_STRING, train_steps
                                  seed=0
                                  )
         eval_env = MultiHoverAviary(num_drones=DEFAULT_AGENTS, obs=DEFAULT_OBS, act=act_space)
-
     #### Check the environment's spaces ########################
     print('[INFO] Action space:', train_env.action_space)
     print('[INFO] Observation space:', train_env.observation_space)

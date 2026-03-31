@@ -18,7 +18,8 @@ class HoverAviary(BaseRLAviary):
                  gui=False,
                  record=False,
                  obs: ObservationType=ObservationType.KIN,
-                 act: ActionType=ActionType.RPM
+                 act: ActionType=ActionType.RPM,
+                 terminate_on_boundary: bool = False
                  ):
         """Initialization of a single agent RL environment.
 
@@ -50,6 +51,8 @@ class HoverAviary(BaseRLAviary):
         """
         self.TARGET_POS = np.array([0,0,1])
         self.EPISODE_LEN_SEC = 8
+        self.TERMINATE_ON_BOUNDARY = terminate_on_boundary
+        self.safety_violations = 0
         super().__init__(drone_model=drone_model,
                          num_drones=1,
                          initial_xyzs=initial_xyzs,
@@ -91,9 +94,17 @@ class HoverAviary(BaseRLAviary):
         """
         state = self._getDroneStateVector(0)
         if np.linalg.norm(self.TARGET_POS-state[0:3]) < .0001:
+            print("reached target and terminated")
             return True
-        else:
-            return False
+        if self.TERMINATE_ON_BOUNDARY:
+            # 2x2x2 box centered on TARGET_POS; floor threshold >0 since physics prevents z<0
+            if (abs(state[0] - self.TARGET_POS[0]) > 1.0 or
+                abs(state[1] - self.TARGET_POS[1]) > 1.0 or
+                state[2] > self.TARGET_POS[2] + 1.0 or
+                state[2] < 0.05):
+                print("Safety Violation Occured!")
+                return True
+        return False
         
     ################################################################################
     
@@ -107,10 +118,15 @@ class HoverAviary(BaseRLAviary):
 
         """
         state = self._getDroneStateVector(0)
-        if (abs(state[0]) > 1.5 or abs(state[1]) > 1.5 or state[2] > 2.0 # Truncate when the drone is too far away
-             or abs(state[7]) > .4 or abs(state[8]) > .4 # Truncate when the drone is too tilted
-        ):
-            return True
+        if not self.TERMINATE_ON_BOUNDARY:
+            if (abs(state[0]) > 1.5 or abs(state[1]) > 1.5 or state[2] > 2.0 # Truncate when the drone is too far away
+                 # or abs(state[7]) > .4 or abs(state[8]) > .4 # Truncate when the drone is too tilted
+            ):
+                
+                return True
+        # else:
+        #     if abs(state[7]) > .4 or abs(state[8]) > .4: # Truncate when the drone is too tilted
+        #         return True
         if self.step_counter/self.PYB_FREQ > self.EPISODE_LEN_SEC:
             return True
         else:
@@ -129,4 +145,7 @@ class HoverAviary(BaseRLAviary):
             Dummy value.
 
         """
-        return {"answer": 42} #### Calculated by the Deep Thought supercomputer in 7.5M years
+        return {"answer": 42} #### Calculated by the Deep Thought supercomputer in 7.5M yearsr
+
+    def print_violations(self):
+        print("number of violations: ", self.safety_violations)
