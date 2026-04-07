@@ -1,11 +1,4 @@
-"""ISAACS with tau-GDA actor update rule from MAGICS (arXiv:2409.13867).
-
-Changes vs. base ISAACS:
-  1. Actor updates BEFORE disturbance (sequential per MAGICS Alg. 1: θ step, then ψ step).
-  2. Actor loss uses fresh d̃ ~ π^d_ψ (no_grad) instead of replay_data.disturbances.
-  3. Disturbance loss uses fresh ũ ~ π^u_θ (no_grad) instead of replay_data.actions.
-  4. Disturbance gradient is scaled by tau_a (equivalent to LR_dist = tau_a * LR_actor).
-     tau_a > 1 gives the disturbance faster timescale — the key tau-GDA convergence condition.
+"""ISAACS with tau-GDA actor update rule from MAGICS
 """
 
 from typing import Any, Optional, Union
@@ -29,9 +22,7 @@ class ISAACS_tauGDA(ISAACS):
     ISAACS with the tau-GDA actor update rule from MAGICS (Wang et al., WAFR 2024).
 
     New parameter vs. base ISAACS:
-    :param tau_a: Disturbance timescale ratio. The disturbance gradient step is
-                  scaled by tau_a (effective LR_dist = tau_a * LR_actor). Must be
-                  >= 1.0; values around 2–10 are typical. Default 1.0 = vanilla GDA.
+    :param tau_a: Disturbance timescale ratio. 
     """
 
     def __init__(
