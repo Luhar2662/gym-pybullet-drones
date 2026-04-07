@@ -243,8 +243,6 @@ class ISAACS(SAC):
 
         # Sample one episode adversary per env from the leaderboard at the start of each
         # rollout. Re-sampled whenever an episode ends
-
-        
         episode_adversaries = [self.leaderboard.sample_disturbance_policy() for _ in range(env.num_envs)]
 
         while should_collect_more_steps(train_freq, num_collected_steps, num_collected_episodes):
@@ -257,10 +255,6 @@ class ISAACS(SAC):
             actions, buffer_actions = self._sample_action(learning_starts, action_noise, env.num_envs)
 
             # ISAACS: sample adversarial disturbance using the per-episode leaderboard disturbance.
-            # NOTE: stub leaderboard always returns self.disturbance_actor, so all identical for now
-            # For simplicity with multiple envs, use env 0's adversary for the full batch.
-
-            # TODO: when leaderboard is real, handle per-env adversaries properly.
             disturbances, buffer_disturbances = self._sample_disturbance(
                 learning_starts, env.num_envs, adversary=episode_adversaries[0]
             )

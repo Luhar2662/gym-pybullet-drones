@@ -24,7 +24,7 @@ from wandb.integration.sb3 import WandbCallback
 import wandb
 
 from gym_pybullet_drones.utils.Logger import Logger
-from gym_pybullet_drones.envs.SafeHoverAviary import SafeHoverAviary
+from gym_pybullet_drones.envs.SafeHoverAviary import SafeHoverAviary, DisturbedEnvWrapper
 from gym_pybullet_drones.envs.HoverAviary import HoverAviary
 from gym_pybullet_drones.envs.MultiHoverAviary import MultiHoverAviary
 from gym_pybullet_drones.utils.utils import sync, str2bool
@@ -65,7 +65,9 @@ DEFAULT_VEL_RANGE = 1.0
 DEFAULT_ANG_VEL_RANGE = 1.0
 DEFAULT_HOVER_THRESHOLD = .8
 DEFAULT_HOVER_STEPS = 30
-DEFAULT_EPISODE_LEN_SEC = 6
+DEFAULT_EPISODE_LEN_SEC = 4
+DEFAULT_DISTURBED = False
+DEFAULT_DISTURBANCE_BOUND = 0.2
 
 def run(multiagent=DEFAULT_MA,
         action_space = DEFAULT_ACTION_STRING,
@@ -88,6 +90,8 @@ def run(multiagent=DEFAULT_MA,
         hover_threshold = DEFAULT_HOVER_THRESHOLD,
         hover_steps = DEFAULT_HOVER_STEPS,
         episode_len_sec = DEFAULT_EPISODE_LEN_SEC,
+        disturbed = DEFAULT_DISTURBED,
+        disturbance_bound = DEFAULT_DISTURBANCE_BOUND,
     ):
     
     '''
@@ -115,11 +119,15 @@ def run(multiagent=DEFAULT_MA,
                                                  random_vel=random_vel, vel_range=vel_range, ang_vel_range=ang_vel_range,
                                                  hover_threshold=hover_threshold, hover_steps=hover_steps, episode_len_sec=episode_len_sec),
                                  n_envs=4, # Parallel Environments as supported by PyBullet for more efficient training
-                                 seed=0
+                                 seed=0,
+                                 wrapper_class=DisturbedEnvWrapper if disturbed else None,
+                                 wrapper_kwargs=dict(disturbance_bound=disturbance_bound) if disturbed else None,
                                  )
 
     #Eval env using biased random, but has used uniform random in the past. This should better preserve the "best" model for filtering purposes
     eval_env = SafeHoverAviary(obs=DEFAULT_OBS, act=act_space, random_init=random_init, biased_random=biased_random, bias_threshold=bias_threshold)
+    if disturbed:
+        eval_env = DisturbedEnvWrapper(eval_env, disturbance_bound=disturbance_bound)
     
     
     
@@ -159,7 +167,7 @@ def run(multiagent=DEFAULT_MA,
                                  verbose=1,
                                  best_model_save_path=filename+'/',
                                  log_path=filename+'/',
-                                 eval_freq=int(1000),
+                                 eval_freq=int(7500),
                                  deterministic=True,
                                  render=False)
     wandb_callback = WandbCallback(
@@ -282,6 +290,8 @@ if __name__ == '__main__':
     parser.add_argument('--hover_threshold', default=DEFAULT_HOVER_THRESHOLD,  type=float, help='Safety margin above which hover counter increments', metavar='')
     parser.add_argument('--hover_steps',     default=DEFAULT_HOVER_STEPS,   type=int,   help='Consecutive steps above hover_threshold before truncating', metavar='')
     parser.add_argument('--episode_len_sec', default=DEFAULT_EPISODE_LEN_SEC,    type=int,   help='Hard episode length cap in seconds', metavar='')
+    parser.add_argument('--disturbed',        default=DEFAULT_DISTURBED,          type=str2bool, help='Whether to wrap envs with DisturbedEnvWrapper during training', metavar='')
+    parser.add_argument('--disturbance_bound', default=DEFAULT_DISTURBANCE_BOUND, type=float,    help='Uniform disturbance bound applied to actions (symmetric, per-dim)', metavar='')
     ARGS = parser.parse_args()
 
     run(**vars(ARGS))

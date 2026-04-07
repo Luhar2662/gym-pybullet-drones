@@ -39,7 +39,7 @@ class SafeHoverAviary(BaseRLAviary):
                  num_segments = 1,
                  segment_path = False,
                  warmup_dur = 3,
-                 random_init = False,
+                 random_init = True,
                  obs: ObservationType=ObservationType.KIN,
                  act: ActionType=ActionType.RPM,
                  biased_random = True,

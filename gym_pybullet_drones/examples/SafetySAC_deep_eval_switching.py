@@ -28,6 +28,7 @@ from gym_pybullet_drones.envs.CtrlAviary import CtrlAviary
 from gym_pybullet_drones.control.DSLPIDControl import DSLPIDControl
 from gym_pybullet_drones.utils.utils import str2bool
 from gym_pybullet_drones.isaacs.safety_sac import SafetySAC
+from gym_pybullet_drones.envs.SafeHoverAviary import DisturbedEnvWrapper
 
 DEFAULT_DRONES = DroneModel("cf2x")
 DEFAULT_PHYSICS = Physics("pyb")
@@ -43,6 +44,8 @@ DEFAULT_SAFE_TARGET = False
 DEFAULT_BIAS_TARGET = False
 DEFAULT_NUM_RUNS = 100
 DEFAULT_NUM_WORKERS = max(1, mp.cpu_count() - 1)
+DEFAULT_DISTURBED = False
+DEFAULT_DISTURBANCE_BOUND = 0.2
 
 SAFE_CTRL_FREQ = 30
 ACTION_BUFFER_SIZE = SAFE_CTRL_FREQ // 2
@@ -135,7 +138,7 @@ def run_episode(env, model, ctrl, HOVER_RPM, target, start_pos, start_rpy,
 
     for i in range(int(duration_sec * env.CTRL_FREQ)):
         env.step(action)
-        state = env._getDroneStateVector(0)
+        state = env.unwrapped._getDroneStateVector(0)
         drone_x, drone_y, drone_z = state[0], state[1], state[2]
 
         # Hard bounds exceeded: count as irrecoverable and end episode
@@ -203,7 +206,7 @@ _worker_hover_rpm = None
 _worker_start_pos = None
 _worker_start_rpy = None
 
-def _worker_init(model_path, start_pos, start_rpy, drone, physics, sim_freq):
+def _worker_init(model_path, start_pos, start_rpy, drone, physics, sim_freq, disturbed, disturbance_bound):
     global _worker_env, _worker_model, _worker_ctrl, _worker_hover_rpm
     global _worker_start_pos, _worker_start_rpy
     th.set_num_threads(1)  # avoid thread contention across workers
@@ -219,6 +222,8 @@ def _worker_init(model_path, start_pos, start_rpy, drone, physics, sim_freq):
         gui=False,
         user_debug_gui=False,
     )
+    if disturbed:
+        _worker_env = DisturbedEnvWrapper(_worker_env, disturbance_bound=disturbance_bound)
     _worker_hover_rpm = _worker_env.HOVER_RPM
     _worker_ctrl = [DSLPIDControl(drone_model=drone)]
     _worker_start_pos = start_pos
@@ -236,6 +241,7 @@ def _worker_run(task):
 # ---- Entry point ----
 
 if __name__ == "__main__":
+    mp.set_start_method('spawn', force=True)
     parser = argparse.ArgumentParser(description='Deep batch evaluation of switching safety filter')
     parser.add_argument('--drone',              default=DEFAULT_DRONES,             type=DroneModel, metavar='', choices=DroneModel)
     parser.add_argument('--physics',            default=DEFAULT_PHYSICS,            type=Physics,    metavar='', choices=Physics)
@@ -251,6 +257,8 @@ if __name__ == "__main__":
     parser.add_argument('--bias_target',        default=DEFAULT_BIAS_TARGET,        type=str2bool,   metavar='')
     parser.add_argument('--num_runs',           default=DEFAULT_NUM_RUNS,           type=int,        metavar='')
     parser.add_argument('--num_workers',        default=DEFAULT_NUM_WORKERS,        type=int,        metavar='', help='parallel worker processes (default: cpu_count-1)')
+    parser.add_argument('--disturbed',          default=DEFAULT_DISTURBED,          type=str2bool,   metavar='', help='Whether to wrap env with DisturbedEnvWrapper during eval')
+    parser.add_argument('--disturbance_bound',  default=DEFAULT_DISTURBANCE_BOUND,  type=float,      metavar='', help='Uniform disturbance bound applied to actions (symmetric, per-dim)')
     ARGS = parser.parse_args()
 
     if not os.path.isfile(ARGS.model_path):
@@ -289,7 +297,8 @@ if __name__ == "__main__":
 
     print(f"[INFO] Running {ARGS.num_runs} episodes on {ARGS.num_workers} worker(s)...")
     initargs = (ARGS.model_path, start_pos, start_rpy,
-                ARGS.drone, ARGS.physics, ARGS.simulation_freq_hz)
+                ARGS.drone, ARGS.physics, ARGS.simulation_freq_hz,
+                ARGS.disturbed, ARGS.disturbance_bound)
 
     with mp.Pool(processes=ARGS.num_workers,
                  initializer=_worker_init,

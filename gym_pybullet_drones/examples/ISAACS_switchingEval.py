@@ -46,6 +46,7 @@ DEFAULT_GUARD_DURATION = 10
 DEFAULT_SAFETY_THRESHOLD = 0.25
 DEFAULT_SAFE_TARGET = False
 DEFAULT_BIAS_TARGET = False
+DEFAULT_UNSAFE_TARGET = False
 
 #Match ctrl_freq from the SafeHoverAviary instance that training occured in for an action buffer
 SAFE_CTRL_FREQ = 30
@@ -171,6 +172,29 @@ def biased_target():
 
         return random_target, random_target_rpy
 
+def outside_target():
+
+        '''
+        Pull from a specific safety margin with certainty, such that we always initialize from meaningful
+        positions for testing!
+        '''
+
+        intervals = [[-2,-1],[1,2]]
+        z_intervals = [[-1,0],[2,3]]
+
+        x_int = np.random.choice([0,1])
+        y_int = np.random.choice([0,1])
+        z_int = np.random.choice([0,1])
+
+        random_target = np.array([[np.random.uniform(intervals[x_int][0],intervals[x_int][1]),
+                               np.random.uniform(intervals[y_int][0],intervals[y_int][1]),
+                               np.random.uniform(z_intervals[z_int][0],z_intervals[z_int][1])] for i in range(1)])
+
+        random_target_rpy = np.array([[0,0,0
+                            ] for i in range(1)])
+
+        return random_target, random_target_rpy
+
 def safe_random_init(model, threshold):
         verified = False
         while not verified:
@@ -221,6 +245,7 @@ def run( #follows PID control examples in gym_pybullet_drones
         guard_duration=DEFAULT_GUARD_DURATION,
         safe_target = DEFAULT_SAFE_TARGET,
         bias_target = DEFAULT_BIAS_TARGET,
+        unsafe_target = DEFAULT_UNSAFE_TARGET,
 ):
     # Load ISAACS fallback model and critic from --model_path
     if not os.path.isfile(model_path):
@@ -245,7 +270,10 @@ def run( #follows PID control examples in gym_pybullet_drones
         target = safe_pos
     elif bias_target:
         bias_pos,_ = biased_target()
-        target = bias_pos[0]
+        target = bias_pos
+    elif unsafe_target:
+         unsafe_pos, _ = outside_target()
+         target = unsafe_pos
     else:
         target = random_target()
 
@@ -298,9 +326,9 @@ def run( #follows PID control examples in gym_pybullet_drones
     start = time.time()
 
     for i in range(int(duration_sec * env.CTRL_FREQ)):
-        env.step(action) #step the environment at the start of each timestep
-        state = env._getDroneStateVector(0) #pull state from environment
-
+        env.step(action)
+        state = env._getDroneStateVector(0) 
+        
         drone_x, drone_y, drone_z = state[0], state[1], state[2] #pull xyz
 
         #Check if drone has exited bounds (not the same as safety), and terminate episode if so
@@ -426,6 +454,7 @@ if __name__ == "__main__":
     parser.add_argument('--safety_threshold',   default=DEFAULT_SAFETY_THRESHOLD, type=float,      help='threshold q value for triggering guard activation' ,metavar='')
     parser.add_argument('--safe_target',        default=DEFAULT_SAFE_TARGET,      type=str2bool,   help='whether to safely initiate drone target', metavar='')
     parser.add_argument('--bias_target',        default=DEFAULT_BIAS_TARGET,      type=str2bool,   help='whether to bias initiate drone target', metavar='')
+    parser.add_argument('--unsafe_target',        default=DEFAULT_UNSAFE_TARGET,      type=str2bool,   help='whether to bias initiate drone target', metavar='')
     ARGS = parser.parse_args()
 
     run(**vars(ARGS))
