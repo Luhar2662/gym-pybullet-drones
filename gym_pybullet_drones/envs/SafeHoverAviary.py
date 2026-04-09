@@ -13,13 +13,16 @@ from gym_pybullet_drones.utils.enums import DroneModel, Physics, ActionType, Obs
 import time
 
 class DisturbedEnvWrapper(gym.Wrapper):
-    def __init__(self, env, disturbance_bound = .2):
+    def __init__(self, env, disturbance_bound=0.2):
         super().__init__(env)
         self.disturbance_bound = disturbance_bound
-    
+        # Scale disturbance_bound as a fraction of hover RPM so that
+        # disturbance_bound=0.2 means ±20% of hover RPM regardless of action scale.
+        self._rpm_scale = env.HOVER_RPM
+
     def step(self, action):
         noise = np.random.uniform(-self.disturbance_bound, self.disturbance_bound, size=action.shape)
-        disturbed = np.clip(action+noise, self.action_space.low, self.action_space.high)
+        disturbed = np.clip(action + noise * self._rpm_scale, self.action_space.low, self.action_space.high)
         return self.env.step(disturbed)
 
 class SafeHoverAviary(BaseRLAviary):

@@ -458,10 +458,11 @@ class ISAACS(SAC):
 
             ############## Disturbance Update ########################
             # Minimizing this drives Q down (adversarial) + entropy bonus
-            #Sample a fresh disturbance from current adversary policy!
-            d_pi, d_log_prob = self.disturbance_actor.action_log_prob(replay_data.observations) 
+            d_pi, d_log_prob = self.disturbance_actor.action_log_prob(replay_data.observations)
+            with th.no_grad():
+                u_pi_for_dist, _ = self.actor.action_log_prob(replay_data.observations)
             q_values_d = th.cat(
-                self.critic(replay_data.observations, replay_data.actions, d_pi),
+                self.critic(replay_data.observations, u_pi_for_dist, d_pi),
                 dim=1,
             )
             min_q_d, _ = th.min(q_values_d, dim=1, keepdim=True)
@@ -473,7 +474,7 @@ class ISAACS(SAC):
             self.disturbance_actor.optimizer.zero_grad()
             disturbance_loss.backward()
             self.disturbance_actor.optimizer.step()
-            
+
 
             ############## Actor update ##############################
             # Minimizing this maximizes Q (safety) + entropy bonus
@@ -486,9 +487,11 @@ class ISAACS(SAC):
                         and total_step % self.leaderboard_update_freq == 0):
                     self.leaderboard.update(self.actor, self.disturbance_actor)
 
-                #sample again (this happens earlier in safety_sac, placed here for readability)
                 u_pi, u_log_prob = self.actor.action_log_prob(replay_data.observations)
-                q_values_u = th.cat(self.critic(replay_data.observations, u_pi, replay_data.disturbances),dim=1)
+                #sample disturbance
+                with th.no_grad():
+                    d_pi_for_actor, _ = self.disturbance_actor.action_log_prob(replay_data.observations)
+                q_values_u = th.cat(self.critic(replay_data.observations, u_pi, d_pi_for_actor), dim=1)
                 min_q_u, _ = th.min(q_values_u, dim=1, keepdim=True)
 
                 actor_loss = (ent_coef*u_log_prob - min_q_u).mean()

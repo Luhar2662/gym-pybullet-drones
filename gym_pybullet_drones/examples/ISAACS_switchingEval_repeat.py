@@ -35,8 +35,8 @@ DEFAULT_RECORD_VISION = False
 DEFAULT_PLOT = True
 DEFAULT_USER_DEBUG_GUI = False
 DEFAULT_SIMULATION_FREQ_HZ = 240
-DEFAULT_DURATION_SEC = 6
-DEFAULT_OUTPUT_FOLDER = 'videos'
+DEFAULT_DURATION_SEC = 8
+DEFAULT_OUTPUT_FOLDER = 'results'
 DEFAULT_COLAB = False
 DEFAULT_NUM_SEGMENTS = 1
 DEFAULT_SEGMENT_PATH = True
@@ -294,8 +294,6 @@ def run( #follows PID control examples in gym_pybullet_drones
         pyb_freq = simulation_freq_hz,
         ctrl_freq = SAFE_CTRL_FREQ, #must match SafeHoverAviary settings so that trained fallback is accurate
         gui = gui,
-        record = record_video,
-        output_folder = output_folder,
         user_debug_gui = user_debug_gui,
     )
 
@@ -310,7 +308,7 @@ def run( #follows PID control examples in gym_pybullet_drones
         output_folder="logs_pid_eval/",
         colab=False,
     )
-
+    
     # Safety Filter setup and monitoring (mostly just tracking guard activation)
     guard_active = False
     guard_timesteps = guard_duration
@@ -360,12 +358,8 @@ def run( #follows PID control examples in gym_pybullet_drones
         candidate = np.zeros((num_drones,4))
         for j in range(num_drones):
             target_wp = waypoints[j, waypoint_ct] if segment_path else target[j]
-            candidate[j, :], _, _ = ctrl[j].computeControlFromState(
-                 control_timestep=env.CTRL_TIMESTEP, 
-                 state=state,
-                 target_pos=target_wp, 
-                 target_rpy = start_rpy[j],
-            )
+            candidate[j, :], _, _ = ctrl[j].computeControlFromState(control_timestep=env.CTRL_TIMESTEP, state=state,
+                                                                    target_pos=target_wp, target_rpy = start_rpy[j])
 
         #Filter candidate action by generating safe obs and querying ISAACS critic with disturbance actor sample
         safe_obs = build_safe_obs(state, action_buffer)
@@ -434,10 +428,10 @@ def run( #follows PID control examples in gym_pybullet_drones
     print("[RESULTS] Safety violations:", safety_violations, " times!")
     print("[RESULTS] Reached target:", reached)
 
-    logger.save()
+    #logger.save()
     #logger.save_as_csv("pid_eval")
-    if plot:
-        logger.plot()
+    #if plot:
+     #   logger.plot()
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='PID safety filter evaluation using CtrlAviary + ISAACS')
@@ -463,4 +457,5 @@ if __name__ == "__main__":
     parser.add_argument('--unsafe_target',        default=DEFAULT_UNSAFE_TARGET,      type=str2bool,   help='whether to bias initiate drone target', metavar='')
     ARGS = parser.parse_args()
 
-    run(**vars(ARGS))
+    while True:
+        run(**vars(ARGS))
