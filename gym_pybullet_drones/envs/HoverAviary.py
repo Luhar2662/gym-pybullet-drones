@@ -53,6 +53,7 @@ class HoverAviary(BaseRLAviary):
         self.EPISODE_LEN_SEC = 8
         self.TERMINATE_ON_BOUNDARY = terminate_on_boundary
         self.safety_violations = 0
+        self.episode_count = 0
         super().__init__(drone_model=drone_model,
                          num_drones=1,
                          initial_xyzs=initial_xyzs,
@@ -94,7 +95,6 @@ class HoverAviary(BaseRLAviary):
         """
         state = self._getDroneStateVector(0)
         if np.linalg.norm(self.TARGET_POS-state[0:3]) < .0001:
-            print("reached target and terminated")
             return True
         if self.TERMINATE_ON_BOUNDARY:
             # 2x2x2 box centered on TARGET_POS; floor threshold >0 since physics prevents z<0
@@ -102,7 +102,7 @@ class HoverAviary(BaseRLAviary):
                 abs(state[1] - self.TARGET_POS[1]) > 1.0 or
                 state[2] > self.TARGET_POS[2] + 1.0 or
                 state[2] < 0.05):
-                print("Safety Violation Occured!")
+                self.safety_violations += 1
                 return True
         return False
         
@@ -147,5 +147,9 @@ class HoverAviary(BaseRLAviary):
         """
         return {"answer": 42} #### Calculated by the Deep Thought supercomputer in 7.5M yearsr
 
+    def reset(self, **kwargs):
+        self.episode_count += 1
+        return super().reset(**kwargs)
+
     def print_violations(self):
-        print("number of violations: ", self.safety_violations)
+        print(f"episodes: {self.episode_count - 1} | safety violations: {self.safety_violations}")

@@ -91,7 +91,8 @@ def run(multiagent=DEFAULT_MA, output_folder=DEFAULT_OUTPUT_FOLDER, gui=DEFAULT_
     model = PPO('MlpPolicy',
                 train_env,
                 tensorboard_log=f"runs/{wandb_run.id}",
-                verbose=1)
+                verbose=1,
+                device='cpu')
 
     #### Target cumulative rewards (problem-dependent) ##########
     if DEFAULT_ACT == ActionType.ONE_D_RPM:
@@ -105,7 +106,7 @@ def run(multiagent=DEFAULT_MA, output_folder=DEFAULT_OUTPUT_FOLDER, gui=DEFAULT_
                                  verbose=1,
                                  best_model_save_path=filename+'/',
                                  log_path=filename+'/',
-                                 eval_freq=int(1000),
+                                 eval_freq=int(5000),
                                  deterministic=True,
                                  render=False)
     wandb_callback = WandbCallback(
@@ -133,7 +134,8 @@ def run(multiagent=DEFAULT_MA, output_folder=DEFAULT_OUTPUT_FOLDER, gui=DEFAULT_
     ############################################################
 
     if local:
-        train_env.env_method('print_violations')
+        for env in train_env.envs:
+            env.unwrapped.print_violations()
         input("Press Enter to continue...")
 
     # if os.path.isfile(filename+'/final_model.zip'):
@@ -142,7 +144,7 @@ def run(multiagent=DEFAULT_MA, output_folder=DEFAULT_OUTPUT_FOLDER, gui=DEFAULT_
         path = filename+'/best_model.zip'
     else:
         print("[ERROR]: no model under the specified path", filename)
-    model = PPO.load(path)
+    model = PPO.load(path, device='cpu')
 
     #### Show (and record a video of) the model's performance ##
     if not multiagent:

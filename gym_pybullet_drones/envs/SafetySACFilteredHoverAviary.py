@@ -45,6 +45,7 @@ class SafetySACFilteredHoverAviary(BaseRLAviary):
         self.model = fallback_model
         self.fallback_threshold = fallback_threshold
         self.safety_violations = 0
+        self.episode_count = 0
 
     ################################################################################
     
@@ -131,6 +132,7 @@ class SafetySACFilteredHoverAviary(BaseRLAviary):
 
     def reset(self, **kwargs):
         self.filter_activations = 0
+        self.episode_count += 1
         return super().reset(**kwargs)
 
     ###############################################################################
@@ -160,5 +162,5 @@ class SafetySACFilteredHoverAviary(BaseRLAviary):
         return super().step(passthrough)
 
     def print_violations(self):
-        print("number of violations: ", self.safety_violations)
+        print(f"episodes: {self.episode_count - 1} | safety violations: {self.safety_violations}")
 

@@ -154,7 +154,8 @@ def run(multiagent=DEFAULT_MA, output_folder=DEFAULT_OUTPUT_FOLDER, gui=DEFAULT_
     ############################################################
 
     if local:
-        train_env.env_method('print_violations')
+        for env in train_env.envs:
+            env.unwrapped.print_violations()
         input("Press Enter to continue...")
 
     # if os.path.isfile(filename+'/final_model.zip'):
