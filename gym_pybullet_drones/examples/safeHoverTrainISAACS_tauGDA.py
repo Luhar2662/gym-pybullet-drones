@@ -3,7 +3,7 @@ Main Training Script for models using ISAACS_tauGDA (tau-GDA variant of ISAACS)
 
 Uses SafeHoverAviary as the learning environment, and uses the ISAACS_tauGDA.py and isaacs_utils.py
 implementation for the algorithm. ISAACS_tauGDA extends ISAACS with sequential tau-GDA actor updates
-from MAGICS (arXiv:2409.13867) for improved minimax convergence.
+from MAGICS for improved minimax convergence.
 
 Adapted from safeHoverTrainISAACS.py
 '''
@@ -114,6 +114,7 @@ def run(multiagent=DEFAULT_MA,
         leaderboard_n_eps = DEFAULT_LEADERBOARD_N_EPS,
 ):
     '''
+    Important Parameters:
     action_space: one of 'rpm', 'pid', 'vel', 'one_d_rpm', 'one_d_pid'
     train_steps: amount of timesteps to train the model
     random_init: whether to randomly initialize across the space at the start of each episode
@@ -122,7 +123,13 @@ def run(multiagent=DEFAULT_MA,
     gamma: discount factor for training
     disturbance_ent_coef: entropy coefficient for the disturbance actor to effect exploration
     actor_update_interval: how many gradient steps to wait before updating actor (by default, 1 = every step)
-    tau_a: disturbance timescale ratio (effective LR_dist = tau_a * LR_actor); >= 1.0
+    disturbance_bound: disturbance bound for the environment and disturbance space (by default same dim as action space)
+    tau_a: disturbance timescale ratio (effective LR_dist = tau_a * LR_actor); >= 1
+    eval_freq: how often eval step is taken. Affects granularity of best model checkpoints
+    random_vel, ang_vel_range, hover_threshold, hover_steps, episode_len_sec: env params, see SafeHoverAviary
+    leaderboard_update_freq: How often to update the leaderboard (in timesteps)
+    leaderboard_ku/d: number of actor and disturbance nets to retain in leaderboard
+    leaderboard_n_eps: how many episodes each head to head comparison runs for in tournament update
     '''
 
     # Establish timestamped save directory for model logging, so that subsequent runs do not overwrite
@@ -144,7 +151,7 @@ def run(multiagent=DEFAULT_MA,
                                  seed=0
                                  )
 
-    #Eval env using biased random, but has used uniform random in the past. This should better preserve the "best" model for filtering purposes
+    #Eval env
     eval_env = SafeHoverAviary(obs=DEFAULT_OBS, act=act_space, random_init=random_init, biased_random=biased_random, bias_threshold=bias_threshold, random_vel=random_vel, vel_range=vel_range, ang_vel_range=ang_vel_range,
                                                  hover_threshold=hover_threshold, hover_steps=hover_steps, episode_len_sec=episode_len_sec)
 
@@ -237,7 +244,6 @@ def run(multiagent=DEFAULT_MA,
     if local:
 
         input("Press Enter to continue...")
-
 
     if os.path.isfile(filename+'/best_model.zip'):
         path = filename+'/best_model.zip'

@@ -13,7 +13,11 @@ from gym_pybullet_drones.utils.enums import DroneModel, Physics, ActionType, Obs
 import time
 
 class DisturbedEnvWrapper(gym.Wrapper):
-    def __init__(self, env, disturbance_bound=0.2):
+    '''
+    Environment Wrapper to inject disturbances. Disturbance bound represents an offset in the control space,
+    equivalent to a percentage of the env's HOVER_RPM value (i.e. bound .02 = 2% offset)
+    '''
+    def __init__(self, env, disturbance_bound=0.02):
         super().__init__(env)
         self.disturbance_bound = disturbance_bound
         # Scale disturbance_bound as a fraction of hover RPM so that
@@ -60,28 +64,9 @@ class SafeHoverAviary(BaseRLAviary):
 
         Using the generic single agent RL superclass.
 
-        Parameters
+        New Parameters:
         ----------
-        drone_model : DroneModel, optional
-            The desired drone type (detailed in an .urdf file in folder `assets`).
-        initial_xyzs: ndarray | None, optional
-            (NUM_DRONES, 3)-shaped array containing the initial XYZ position of the drones.
-        initial_rpys: ndarray | None, optional
-            (NUM_DRONES, 3)-shaped array containing the initial orientations of the drones (in radians).
-        physics : Physics, optional
-            The desired implementation of PyBullet physics/custom dynamics.
-        pyb_freq : int, optional
-            The frequency at which PyBullet steps (a multiple of ctrl_freq).
-        ctrl_freq : int, optional
-            The frequency at which the environment steps.
-        gui : bool, optional
-            Whether to use PyBullet's GUI.
-        record : bool, optional
-            Whether to save a video of the simulation.
-        obs : ObservationType, optional
-            The type of observation space (kinematic information or vision)
-        act : ActionType, optional
-            The type of action space (1 or 3D; RPMS, thurst and torques, or waypoint with PID control)
+        
         biased_random: bool, optional
             Decides whether to use biased_random_target() when initializing from random_init
         bias_threshold : float, optional
@@ -91,19 +76,17 @@ class SafeHoverAviary(BaseRLAviary):
         random_eval: bool, optional
             Decides whether to use random_eval_target() when initializing episodes
         fallback_model: ISAACS model, optional
-        
+            Model used for fallback / filtering within safe_init()
         random_vel: bool, optional
-
+            Whether to initialize the drone with a random initial velocity upon calls to _warmup()
         vel_range: float, optional
-
+            Range of linear velocity initialization when random_vel is true
         ang_vel_range: float, optional
-
+            Range of angular velocity initialization when random_ang_vel is true
         hover_threshold: float, optional
-
+            The range of the box from the center that counts as 'hovering' for the purposes of episode truncation
         hover_steps: int, optional
-
-        episode_len_sec: int, optional
-
+            Steps the model needs to remain within hover_threshold for truncatoin
         """
         self.NUM_SEGMENTS = num_segments
         self.warmup_called = 0
@@ -140,20 +123,11 @@ class SafeHoverAviary(BaseRLAviary):
     ################################################################################
     
     def _computeReward(self):
-        """Computes the current reward value.
-
-        Returns
-        -------
-        float
-            The reward.
-
+        """
+        Computes the current reward value. (Safety Margin)
         """
         state = self._getDroneStateVector(0)
         
-        #return -1 * np.linalg.norm(np.array([0, 0, 1])-state[0:3])**2
-        #ground_margin = np.linalg.norm(state[0:3]-np.array([0,0,0]))
-        #ceil_margin = np.linalg.norm(np.array([0,0,2])-state[0:3])
-        # basic way to get signed distance: difference in z-coords. should work even in the not 1-d case, but need to add reward shaping to avoid lateral drift
         ground_margin = state[2]
         left_margin = 1 - state[1]
         right_margin = state[1] + 1
@@ -162,14 +136,7 @@ class SafeHoverAviary(BaseRLAviary):
         ceil_margin = 2 - state[2]
         safety_margin = min(ground_margin, ceil_margin, back_margin, front_margin, left_margin, right_margin)
 
-        #test reward to penalize being on ground:
-        penalty = -20 if state[2]<.25 else 0
-
-
-        return safety_margin #+ penalty
-
-        #ret = max(0, 2 - np.linalg.norm(self.TARGET_POS-state[0:3])**4)
-        #return ret
+        return safety_margin
 
     ################################################################################
     def _computeObsForControl(self):
@@ -187,13 +154,7 @@ class SafeHoverAviary(BaseRLAviary):
     ################################################################################
     
     def _computeTerminated(self):
-        """Computes the current done value.
-
-        Returns
-        -------
-        bool
-            Whether the current episode is done.
-
+        """Computes the current done value
         """
         state = self._getDroneStateVector(0)
         if np.linalg.norm(self.TARGET_POS-state[0:3]) < .0001:
@@ -254,7 +215,8 @@ class SafeHoverAviary(BaseRLAviary):
     ################################################################################
 
     def segment(self, init_xyzs, goal_pos, segments) -> np.ndarray:
-        '''Returns interim waypoints for pid manual warmup during _warmup()
+        '''
+        Returns interim waypoints for pid manual warmup during _warmup()
         '''
         target_waypoints = np.zeros((segments, 3))
         tot_offset = goal_pos - init_xyzs
@@ -302,24 +264,17 @@ class SafeHoverAviary(BaseRLAviary):
                 target = self.RANDOM_TARGET
                 target_rpy = self.RANDOM_TARGET_RPY
             
-        #print("starting warmup!! target: ", target, " ", target_rpy, " warmup number: ", self.warmup_called)
         self.warmup_called += 1
         if control_loop:
             print("calling control loop (first run only)")
             
             waypoints = np.array([self.segment(self.INIT_XYZS[i], target[i], self.NUM_SEGMENTS) for i in range(self.NUM_DRONES)])
-            #print("waypoints: ", waypoints.shape)
             waypoint_ct = 0
             waypoint_dur = self.WARMUP_DUR / self.NUM_SEGMENTS
             
             
             #TODO: Use ctrl_aviary or _nextstep() calcs to get to setpoint.
-            ctrl_client = DSLPIDControl(drone_model = self.DRONE_MODEL)
             ctrl_client = [DSLPIDControl(drone_model = self.DRONE_MODEL) for i in range(self.NUM_DRONES)]
-
-
-            #print(warmup called) -- verified that this runs each ep.
-            #useful env params: initial_xyzs, initial_rpys, pyb_freq, self.PYB_STEPS_PET_CTRL, self.CLIENT (phys client)
 
             action = np.zeros((self.NUM_DRONES, 4))
         
@@ -327,20 +282,14 @@ class SafeHoverAviary(BaseRLAviary):
             first_step = True
             for i in range(0, int(self.WARMUP_DUR*self.CTRL_FREQ)):
                 #step the env:
-                #print("calling step with action: ", action)
-            
             
                 if i != 0 and (i % (waypoint_dur*self.CTRL_FREQ)==0) and self.SEGMENT_PATH:
                     waypoint_ct = waypoint_ct + 1
         
 
                 obs, reward, terminated, truncated, info = self.step(action)
-                #print("Observation given back: ", obs)
+                
                 control_obs = self._computeObsForControl()
-                #print("env observation: ", obs)
-                #print("control obs: ", control_obs)
-                #time.sleep(30)
-
                 
                 if first_step:
                     print("starting position: ", control_obs[0])
@@ -356,11 +305,6 @@ class SafeHoverAviary(BaseRLAviary):
                         target_wp = waypoints[j, waypoint_ct, :]
                     else:
                         target_wp = np.hstack([target[j,0:2], target[j, 2]])
-                    #print("target shape: ", np.hstack([target[j,0:2], target[j, 2]]))
-
-                    #for i in range(num_drones):
-                        #print("waypoints: ", segment(INIT_XYZS[i], target[0], num_segments))
-                        #current waypoint: waypoints[waypoint_ct, j, 0:2]
             
 
                     action[j, :], _, _ = ctrl_client[j].computeControlFromState(control_timestep=self.CTRL_TIMESTEP,
@@ -373,7 +317,7 @@ class SafeHoverAviary(BaseRLAviary):
                 #skip logging
         
         
-        #pre-compute next target!
+        #pre-compute next target so that the enviroment initializes there upon reset()
 
         if self.RANDOM_EVAL:
             self.RANDOM_TARGET, self.RANDOM_TARGET_RPY = self.eval_random_target()
@@ -390,6 +334,9 @@ class SafeHoverAviary(BaseRLAviary):
     ################################################################################
 
     def random_target(self):
+        '''
+        uniform random sampling across the bounding box
+        '''
 
         random_target = np.array([[np.random.uniform(-1,1),
                                np.random.uniform(-1,1),
@@ -404,6 +351,10 @@ class SafeHoverAviary(BaseRLAviary):
     ################################################################################
 
     def biased_random_target(self):
+
+        '''
+        biased sampling from the boundary region, depending on env.bias_threshold
+        '''
 
         intervals = [[-1.0,-.5],[.5,1.0]]
         z_intervals = [[.05,.5],[1.5,2.0]]

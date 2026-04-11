@@ -3,7 +3,7 @@ SB3 implementation of SAC (Soft Actor-Critic)
 
 Off-policy algorithm training a control policy and an adversarial "disturbance" policy
 
-Critic is updated using the safety Bellman Backip:
+Critic is updated using the safety Bellman Backup:
 """
 
 from typing import Any, ClassVar, Optional, TypeVar, Union, Tuple
@@ -37,9 +37,7 @@ class ISAACS(SAC):
     Iterative Soft Adverserial Actor Critic for Safety (ISAACS)
     Off-Policy Variation to Soft Actor Critic,
     This implementation extends upon the Stable Baselines 3.0 implementation of SAC,
-    with the proposed ISAACS framework defined in:
-    Paper: https://arxiv.org/abs/2212.03228
-    Introduction to SAC: https://spinningup.openai.com/en/latest/algorithms/sac.html
+    with the proposed ISAACS framework proposed by Hsu et al. 2023.
 
     New Params:
     :param disturbance_space: The disturbance space for the DisturbanceActor
